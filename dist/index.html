@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Git Tracer</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="6" cy="5" r="2.2"/><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="12" r="2.2"/>
+            <path d="M6 7.2v9.6"/><path d="M8.2 5h4.3a5.5 5.5 0 0 1 5.5 5.5v.2"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-name">Git Tracer</span>
+          <span class="brand-sub">Repository Status // Local</span>
+        </div>
+      </div>
+
+      <div class="path-row">
+        <div class="path-input">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l1.8 2.2h7.2A1.5 1.5 0 0 1 19 9.7v7.8A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z"/>
+          </svg>
+          <input id="rootInput" spellcheck="false" autocomplete="off"
+                 placeholder="添加目录（回车）" />
+        </div>
+        <button id="browseBtn" class="btn">浏览…</button>
+        <button id="scanBtn" class="btn primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+            <circle cx="11" cy="11" r="6.2"/><path d="m20 20-4.3-4.3"/>
+          </svg>
+          扫描
+        </button>
+      </div>
+
+      <div class="tool-row">
+        <label class="field">
+          扫描深度
+          <select id="depthSel">
+            <option value="1">1 层</option>
+            <option value="2">2 层</option>
+            <option value="3">3 层</option>
+            <option value="4" selected>4 层</option>
+            <option value="6">6 层</option>
+            <option value="8">8 层</option>
+            <option value="12">12 层</option>
+          </select>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="dirtyOnly" /><span>只看有变更</span>
+        </label>
+        <span class="grow"></span>
+        <button id="refreshBtn" class="btn ghost">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 11a8 8 0 1 0-2.4 5.7"/><path d="M20 4.5V11h-6.5"/>
+          </svg>
+          重新扫描
+        </button>
+      </div>
+    </header>
+
+    <div class="root-chips" id="rootChips"></div>
+
+    <section class="stats" id="stats">
+      <span class="stat" id="statRepos">— 个仓库</span>
+      <span class="stat-sep"></span>
+      <span class="stat" id="statDirty">— 个有变更</span>
+      <span class="stat-sep"></span>
+      <span class="stat" id="statFiles">— 处变更</span>
+      <button class="stat push-entry" id="pushEntry" hidden>
+        待推送 <b id="pushCount">0</b> 个仓库
+      </button>
+      <span class="grow"></span>
+      <span class="stat dim" id="statTime"></span>
+      <span class="stat dim" id="statGit"></span>
+    </section>
+
+    <main class="panes">
+      <aside class="pane pane-repos">
+        <div class="pane-head">
+          <input id="repoFilter" class="filter" placeholder="过滤仓库…" spellcheck="false" />
+          <span class="pane-title" id="repoCount">仓库</span>
+        </div>
+        <ul class="repo-list" id="repoList"></ul>
+      </aside>
+
+      <section class="pane pane-files">
+        <div class="pane-head" id="repoHead">
+          <span class="pane-title">文件</span>
+        </div>
+        <div class="file-filter">
+          <label class="pick-all" title="勾选本仓库全部文件">
+            <input type="checkbox" id="pickAll" /><span></span>全选
+          </label>
+          <input id="fileFilter" class="filter" placeholder="过滤文件路径…" spellcheck="false" />
+          <button id="listSelectNoneBtn" class="btn small ghost" title="取消全部勾选">取消全选</button>
+        </div>
+        <div class="file-list" id="fileList"></div>
+      </section>
+
+      <section class="pane pane-diff">
+        <div class="pane-head diff-head">
+          <div class="tabs" id="viewTabs">
+            <button class="tab on" data-view="diff">差异</button>
+            <button class="tab" data-view="graph">分支树</button>
+          </div>
+          <div class="diff-head-main" id="diffHead"></div>
+        </div>
+        <div class="diff-body" id="diffBody"></div>
+      </section>
+    </main>
+
+    <section class="commitbar" id="commitBar">
+      <div class="commit-info">
+        <span class="commit-label">提交</span>
+        <span class="commit-sub" id="commitSel">未选择仓库</span>
+      </div>
+      <div class="commit-input">
+        <textarea id="commitMsg" class="commit-msg" rows="1" spellcheck="false"
+                  placeholder="提交信息"></textarea>
+        <button id="commitExpandBtn" class="icon-btn" title="编辑提交信息">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 4h6v6"/><path d="M20 4l-7 7"/><path d="M10 20H4v-6"/><path d="M4 20l7-7"/>
+          </svg>
+        </button>
+      </div>
+      <button id="selectAllBtn" class="btn small ghost">全选</button>
+      <button id="selectNoneBtn" class="btn small ghost" disabled>取消全选</button>
+      <button id="commitBtn" class="btn primary small" disabled>提交选中</button>
+      <button id="pullBtn" class="btn small" disabled>拉取</button>
+      <button id="pushBtn" class="btn small" disabled>推送</button>
+    </section>
+
+    <footer class="statusbar">
+      <span id="statusLeft" class="dim">就绪</span>
+      <span class="grow"></span>
+    </footer>
+  </div>
+
+  <div class="modal-wrap" id="modalWrap" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <h2 class="modal-title" id="modalTitle"></h2>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-foot">
+        <button class="btn ghost small" id="modalCancel">取消</button>
+        <button class="btn primary small" id="modalOk">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-wrap" id="toastWrap"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+[package]
+name = "git-tracer"
+version = "0.5.0"
+description = "Git Tracer - 一眼看清目录下所有仓库的待提交内容"
+authors = [""]
+edition = "2021"
+
+[lib]
+name = "git_tracer_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+lto = "thin"
+codegen-units = 4
+strip = true

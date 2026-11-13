@@ -1,0 +1,11 @@
+node_modules/
+src-tauri/target/
+src-tauri/gen/schemas/
+.tmp/
+out.png
+GitTracer-*-portable.zip
+*.log
+.DS_Store
+Thumbs.db
+.workbuddy
+tools/
