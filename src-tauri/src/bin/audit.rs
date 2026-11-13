@@ -24,6 +24,8 @@ const USAGE: &str = r#"gittracer-audit —— 发版 / 交付前的多仓库巡�
   --skip <规则>      跳过某条规则，可重复或逗号分隔
                      可选：dirty conflict operation detached unpushed behind
                            no-upstream stash branch unmerged no-remote
+  --strict           未提交改动也算阻断（从工作区直接打包发版时用这个）
+  --no-strict        关掉配置文件里写的 strict
   --no-config        不读目录里的 .gittracer.toml
   --format <格式>    text（默认）/ md / json
   --out <文件>       写到文件；"-" 表示标准输出
@@ -44,6 +46,7 @@ const USAGE: &str = r#"gittracer-audit —— 发版 / 交付前的多仓库巡�
 
 示例：
   gittracer-audit --root D:\work --branch "main,release/*" --base main
+  gittracer-audit . --strict      # 从工作区直接打包，脏树也算不能发
   gittracer-audit . --format md --out audit.md --fail-on warn
 "#;
 
@@ -114,10 +117,12 @@ fn main() -> ExitCode {
         }
     }
 
+    // 用 passed() 而不是直接数 errors：根目录不可用也算不过，
+    // 否则 CI 里把路径拼错会拿到「0 个仓库、退出码 0」的假通过。
     let code = match cli.fail_on {
         FailOn::Never => 0,
-        FailOn::Error => u8::from(report.totals.errors > 0),
-        FailOn::Warn => u8::from(report.totals.errors + report.totals.warnings > 0),
+        FailOn::Error => u8::from(!report.passed()),
+        FailOn::Warn => u8::from(!report.passed() || report.totals.warnings > 0),
     };
     ExitCode::from(code)
 }
@@ -129,14 +134,20 @@ fn summary(report: &audit::Report) -> String {
     } else {
         format!(" · 依据 {} 个 .gittracer.toml", report.config_files.len())
     };
+    let ws = if t.workspace > 0 {
+        format!(" · {} 个仓库工作区有活", t.workspace)
+    } else {
+        String::new()
+    };
     format!(
-        "{} 个仓库：{} 通过 / {} 未通过 · {} error / {} warn · 结论：{}{}",
+        "{} 个仓库：{} 未通过 / {} 通过 · {} 阻断 / {} 提示 · 结论：{}{}{}",
         t.repos,
-        t.passed,
         t.failed,
+        t.passed,
         t.errors,
-        t.warnings,
+        t.warnings + t.infos,
         report.verdict_word(),
+        ws,
         cfg
     )
 }
@@ -163,6 +174,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Cli>, String>
             }
             "--quiet" | "-q" => quiet = true,
             "--no-config" => opts.use_config = false,
+            "--strict" => opts.strict = Some(true),
+            "--no-strict" => opts.strict = Some(false),
             "--root" => opts
                 .roots
                 .push(std::path::PathBuf::from(value(&mut it, "--root")?)),

@@ -1,6 +1,6 @@
 [package]
 name = "git-tracer"
-version = "0.7.0"
+version = "0.8.0"
 description = "Git Tracer - 一眼看清目录下所有仓库的待提交内容"
 authors = [""]
 edition = "2021"

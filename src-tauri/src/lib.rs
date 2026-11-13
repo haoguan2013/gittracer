@@ -148,7 +148,8 @@ struct AuditEnvelope {
 /// 发版 / 交付前的多仓库巡检（只读）
 ///
 /// `depth` / `branch` 传空表示「没指定」，这时会去读目录里的 `.gittracer.toml`；
-/// `use_config = false` 则完全不看配置文件，行为和 0.6 一致。
+/// `use_config = false` 则完全不看配置文件。`strict` 决定未提交改动算不算阻断，
+/// 传 `None` 表示交给配置文件，再没有就是默认（只提示）。
 #[tauri::command]
 async fn audit_repos(
     roots: Vec<String>,
@@ -157,6 +158,7 @@ async fn audit_repos(
     base: Option<String>,
     skip: Vec<String>,
     use_config: Option<bool>,
+    strict: Option<bool>,
 ) -> Result<AuditEnvelope, String> {
     let opts = audit::Options {
         roots: roots
@@ -180,6 +182,7 @@ async fn audit_repos(
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
         skip,
+        strict,
         use_config: use_config.unwrap_or(true),
         ..audit::Options::default()
     };

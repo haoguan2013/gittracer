@@ -4,7 +4,7 @@
 #   1. 打 v* 标签时自动跑（发版前守一道）；
 #   2. Actions 页面手动跑，目录 / 分支规则 / 忽略项都能填；
 #   3. 别的仓库直接复用：
-#        uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.7.0
+#        uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.8.0
 #
 # 参数留空就用仓库里的 .gittracer.toml：规则跟着代码走，CI 和本地读的是同一份。
 # 全程只读：只跑 status / rev-parse / branch --no-merged，不 fetch、不写引用、不碰工作区。

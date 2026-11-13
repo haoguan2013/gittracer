@@ -10,6 +10,22 @@
 //! 规则刻意做成固定的一套，不做阈值配置：多条「灵活度」只会让 CI 里跑出来的
 //! 结论依赖环境，反而没人敢当门禁用。要放宽就明说跳过哪一条（`--skip`）。
 //!
+//! ## 为什么分 release / workspace 两组
+//!
+//! 最早 `dirty` 是阻断项，结果在第一台真实的开发机上跑出来是**全红**：几十个仓库
+//! 里凡是你最近动过的都判「未通过」，原因小到只改了一个 `package-lock.json`。
+//! 那时候「未通过」等价于「这个仓库你摸过」，结论就没了信息量——全红等于没有红。
+//!
+//! 问题出在把两件不同的事塞进了同一个判定：
+//!
+//! - **release**：发出去的那个提交本身有问题吗？冲突、半途的 rebase、分离的 HEAD、
+//!   没推上去的提交、分支不对。这些不修就是事故。
+//! - **workspace**：你手上还有没提交的活。这是写代码的常态，不是发布缺陷。
+//!
+//! 所以前者算阻断，后者算提示，各自带着自己的 [`Scope`] 进报告。真要从工作区直接
+//! 打包发版的团队，用 `--strict`（或配置里 `strict = true`）把 `dirty` 提回阻断——
+//! 那是他们的实际风险，不该由默认值替他们决定。
+//!
 //! 规则本身可以从 `.gittracer.toml` 里来（见 [`crate::config`]）：命令行 / 界面
 //! 显式给的优先，其次是仓库自带的文件，再次是根目录那份。这样同一套判定既能
 //! 跟仓库一起进版本库，也能在 CI 里一模一样地跑一遍。
@@ -39,6 +55,9 @@ pub struct Options {
     pub base: Option<String>,
     /// 跳过的规则 id（不区分大小写）。`skip` 只累加，文件里的不会覆盖命令行的
     pub skip: Vec<String>,
+    /// 严格模式：把工作区的未提交改动也算阻断。`None` = 没指定，去问配置文件。
+    /// 要从工作区直接打包发版时开它——脏树打出来的产物对不上任何提交。
+    pub strict: Option<bool>,
     /// 单个根目录最多收多少个仓库，防止误指到盘符
     pub max_repos: usize,
     /// 是否读取目录 / 仓库里的 `.gittracer.toml`
@@ -53,6 +72,7 @@ impl Default for Options {
             branch_allow: None,
             base: None,
             skip: Vec::new(),
+            strict: None,
             max_repos: 2000,
             use_config: true,
         }
@@ -96,20 +116,32 @@ impl Severity {
     }
 }
 
+/// 规则在问哪一类问题。报告按这个分组，「能不能发」只看 [`Scope::Release`]。
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum Scope {
+    /// 发出去的那个提交本身有毛病：冲突、半途的变基、分离 HEAD、没推、分支不对
+    Release,
+    /// 工作区里还有没提交的活：脏树、stash、落后远程、遗留分支
+    Workspace,
+}
+
 #[derive(Serialize, Clone, Debug)]
 pub struct Finding {
     pub code: String,
     pub severity: Severity,
+    pub scope: Scope,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }
 
 impl Finding {
-    fn new(code: &str, severity: Severity, message: impl Into<String>) -> Self {
+    fn new(code: &str, severity: Severity, scope: Scope, message: impl Into<String>) -> Self {
         Self {
             code: code.to_string(),
             severity,
+            scope,
             message: message.into(),
             detail: None,
         }
@@ -143,6 +175,45 @@ impl RepoAudit {
     pub fn failed(&self) -> bool {
         self.findings.iter().any(|f| f.severity == Severity::Error)
     }
+
+    /// 有工作区待办（未提交改动 / stash / 落后远程 / 遗留分支）。不影响结论，
+    /// 但要单独汇总——发版单上得写一句「这几个仓库有活没提交」。
+    pub fn workspace_pending(&self) -> bool {
+        self.findings.iter().any(|f| f.scope == Scope::Workspace)
+    }
+
+    /// 工作区那几条的说明拼成一行，进报告的「工作区」小节
+    pub fn workspace_note(&self) -> String {
+        self.findings
+            .iter()
+            .filter(|f| f.scope == Scope::Workspace)
+            .map(|f| f.message.clone())
+            .collect::<Vec<_>>()
+            .join("；")
+    }
+}
+
+/// 三个结论。之前只有「通过 / 未通过」两档，脏树一律算未通过，
+/// 于是每台开发机都是全红；现在中间多一档「注意」：能发，但有活没提交。
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Verdict {
+    /// 没有阻断项，也没有提示
+    Passed,
+    /// 没有阻断项，但有提示（最常见：仓库脏着）
+    Attention,
+    /// 有阻断项，不该发
+    Blocked,
+}
+
+impl Verdict {
+    pub fn word(self) -> &'static str {
+        match self {
+            Verdict::Passed => "通过",
+            Verdict::Attention => "注意",
+            Verdict::Blocked => "未通过",
+        }
+    }
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -153,6 +224,8 @@ pub struct Totals {
     pub errors: usize,
     pub warnings: usize,
     pub infos: usize,
+    /// 有工作区待办的仓库数（这些仓库可能同时通过）
+    pub workspace: usize,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -165,24 +238,28 @@ pub struct Report {
     pub base: Option<String>,
     pub branch_allow: Vec<String>,
     pub skipped: Vec<String>,
+    /// 严格模式是否生效（`dirty` 算不算阻断）
+    pub strict: bool,
     /// 本次读到的全部配置文件，按路径去重
     pub config_files: Vec<String>,
+    /// 给进来但用不了的根目录（不存在 / 不是目录）。不静默跳过：
+    /// CI 里把目录名拼错，跳过就等于「一份空报告、结论通过」，那是假通过。
+    pub root_errors: Vec<String>,
     pub repos: Vec<RepoAudit>,
     pub totals: Totals,
+    pub verdict: Verdict,
     pub elapsed_ms: u64,
 }
 
 impl Report {
+    /// 退出码用这个：只看阻断项，提示不影响「能不能发」。
+    /// 根目录有问题也算不过——它会让整份报告缺东西。
     pub fn passed(&self) -> bool {
-        self.totals.errors == 0
+        self.totals.errors == 0 && self.root_errors.is_empty()
     }
 
     pub fn verdict_word(&self) -> &'static str {
-        if self.passed() {
-            "通过"
-        } else {
-            "未通过"
-        }
+        self.verdict.word()
     }
 }
 
@@ -196,12 +273,15 @@ pub fn run(opts: &Options) -> Result<Report, String> {
     validate(opts)?;
 
     let mut roots: Vec<(PathBuf, Option<config::FileConfig>)> = Vec::new();
+    let mut root_errors: Vec<String> = Vec::new();
     for r in &opts.roots {
         if !r.exists() {
-            return Err(format!("目录不存在：{}", r.display()));
+            root_errors.push(format!("{}：目录不存在", r.display()));
+            continue;
         }
         if !r.is_dir() {
-            return Err(format!("不是一个目录：{}", r.display()));
+            root_errors.push(format!("{}：不是一个目录", r.display()));
+            continue;
         }
         let cfg = if opts.use_config {
             match config::find_in(r) {
@@ -212,6 +292,11 @@ pub fn run(opts: &Options) -> Result<Report, String> {
             None
         };
         roots.push((r.clone(), cfg));
+    }
+    // 一个能用的都没有就没必要往下跑了：继续跑会生成一份「0 个仓库、结论通过」
+    // 的报告，那比直接报错危险得多。
+    if roots.is_empty() {
+        return Err(root_errors.join("；"));
     }
 
     let mut config_files: Vec<String> = Vec::new();
@@ -249,7 +334,9 @@ pub fn run(opts: &Options) -> Result<Report, String> {
         depth_used = opts.depth.unwrap_or(4).clamp(1, 16);
     }
 
-    let mut repos: Vec<RepoAudit> = Vec::with_capacity(refs.len());
+    // 先把每个仓库的规则算清楚（读配置是几次文件 IO，快），再并行跑 git。
+    // 拆成两步是为了让「某个仓库的配置有毛病」只污染它自己那一行，不打断整次巡检。
+    let mut plans: Vec<Plan> = Vec::with_capacity(refs.len());
     for r in &refs {
         let idx = root_of.get(&path_key(&r.path)).copied().unwrap_or(0);
         let (root_path, root_cfg) = roots.get(idx).cloned().unwrap_or_default();
@@ -257,22 +344,30 @@ pub fn run(opts: &Options) -> Result<Report, String> {
         // 仓库自己带的配置。仓库目录正好等于根目录时两份是同一个文件，
         // 读一次就够——这时它按「根目录配置」生效，不再重复算成仓库配置。
         let same_as_root = path_key(&root_path.display().to_string()) == path_key(&r.path);
+        let mut broken: Option<String> = None;
+        let mut note: Option<String> = None;
         let repo_cfg = if opts.use_config && !same_as_root {
             match config::find_in(Path::new(&r.path)) {
-                Some(p) => {
-                    let c = config::load(&p, RULES)?;
-                    // depth 决定「从哪里往下找仓库」，只有根目录那份说得通。
-                    // 仓库里写了就当错误，不能默默忽略——那正是我们反对的「读不懂就放过」。
-                    if c.depth.is_some() {
-                        return Err(format!(
-                            "配置文件 {}：depth 只能写在根目录的 {} 里",
-                            p.display(),
-                            config::FILE_NAME
-                        ));
+                Some(p) => match config::load(&p, RULES) {
+                    Ok(c) => {
+                        // depth 决定「从哪里往下找仓库」，只有根目录那份说得通。
+                        // 仓库里写了不认它，但也不能装作没看见：这多半是同一个文件
+                        // 被当成根目录配置在别处用，说清楚就行，不必让整个仓库不过。
+                        if c.depth.is_some() {
+                            note = Some(format!(
+                                "{} 里的 depth 在这里不生效（它只管从根目录往下找几层），其余设置照常",
+                                p.display()
+                            ));
+                        }
+                        note_config(&mut config_files, &c.display());
+                        Some(c)
                     }
-                    note_config(&mut config_files, &c.display());
-                    Some(c)
-                }
+                    // 真解析不出来就只能按上一层跑，此时结论不可信，标成阻断
+                    Err(e) => {
+                        broken = Some(e);
+                        None
+                    }
+                },
                 None => None,
             }
         } else {
@@ -283,16 +378,20 @@ pub fn run(opts: &Options) -> Result<Report, String> {
             opts.branch_allow.as_deref(),
             opts.base.as_deref(),
             &opts.skip,
+            opts.strict,
             repo_cfg.as_ref(),
             root_cfg.as_ref(),
         );
-        repos.push(audit_repo(
-            &root_path.display().to_string(),
-            r,
-            &rules,
-            repo_cfg.as_ref().map(|c| c.display()),
-        ));
+        plans.push(Plan {
+            root: root_path.display().to_string(),
+            rules,
+            cfg: repo_cfg.as_ref().map(|c| c.display()),
+            broken,
+            note,
+        });
     }
+
+    let mut repos = run_repos(&refs, &plans);
     // 未通过的排前面：CI 日志一屏里先看到要修的
     repos.sort_by(|a, b| {
         b.failed()
@@ -310,6 +409,9 @@ pub fn run(opts: &Options) -> Result<Report, String> {
         } else {
             totals.passed += 1;
         }
+        if r.workspace_pending() {
+            totals.workspace += 1;
+        }
         for f in &r.findings {
             match f.severity {
                 Severity::Error => totals.errors += 1,
@@ -325,9 +427,18 @@ pub fn run(opts: &Options) -> Result<Report, String> {
         opts.branch_allow.as_deref(),
         opts.base.as_deref(),
         &opts.skip,
+        opts.strict,
         None,
         roots.first().and_then(|(_, c)| c.as_ref()),
     );
+
+    let verdict = if totals.errors > 0 || !root_errors.is_empty() {
+        Verdict::Blocked
+    } else if totals.warnings > 0 {
+        Verdict::Attention
+    } else {
+        Verdict::Passed
+    };
 
     Ok(Report {
         generated_at: now_iso8601(),
@@ -339,11 +450,91 @@ pub fn run(opts: &Options) -> Result<Report, String> {
         base: head_rules.base.clone(),
         branch_allow: head_rules.branch_allow.clone(),
         skipped: head_rules.skip.clone(),
+        strict: head_rules.strict,
         config_files,
+        root_errors,
         repos,
         totals,
+        verdict,
         elapsed_ms: started.elapsed().as_millis() as u64,
     })
+}
+
+/// 一个仓库要跑的东西：规则已经合并完，配置路径和它的问题也带上了。
+struct Plan {
+    root: String,
+    rules: Rules,
+    cfg: Option<String>,
+    /// 配置解析失败：按上一层跑，但结论不可信，算阻断
+    broken: Option<String>,
+    /// 配置里被忽略的项（depth）：说清楚，不阻断
+    note: Option<String>,
+}
+
+/// 并行跑所有仓库，结果顺序和 `refs` 一致。
+///
+/// 为什么要并行：`git status` 是一次进程调用，一个带 node_modules 的仓库单次要
+/// 一两秒，35 个仓库串行 90 秒。发版前没人愿意等 90 秒，而这个检查的价值恰恰在
+/// 「顺手跑一下」。8 路并发就能把这段时间压到十几秒，且全程只读，没有副作用。
+fn run_repos(refs: &[scan::RepoRef], plans: &[Plan]) -> Vec<RepoAudit> {
+    let n = refs.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let workers = std::thread::available_parallelism()
+        .map(|v| v.get())
+        .unwrap_or(4)
+        .clamp(1, 8)
+        .min(n);
+    let chunk = (n + workers - 1) / workers;
+    let mut out: Vec<RepoAudit> = Vec::with_capacity(n);
+
+    std::thread::scope(|s| {
+        let handles: Vec<_> = plans
+            .chunks(chunk)
+            .enumerate()
+            .map(|(ci, part)| {
+                let start = ci * chunk;
+                s.spawn(move || -> Vec<RepoAudit> {
+                    part.iter()
+                        .enumerate()
+                        .map(|(k, p)| {
+                            audit_repo(
+                                &p.root,
+                                &refs[start + k],
+                                &p.rules,
+                                p.cfg.clone(),
+                                p.broken.clone(),
+                                p.note.clone(),
+                            )
+                        })
+                        .collect()
+                })
+            })
+            .collect();
+
+        for (ci, h) in handles.into_iter().enumerate() {
+            match h.join() {
+                Ok(v) => out.extend(v),
+                // 线程炸了不能悄悄少几个仓库：门禁少查一个就是假通过
+                Err(_) => {
+                    let start = ci * chunk;
+                    for (k, p) in plans[start..(start + chunk).min(n)].iter().enumerate() {
+                        out.push(audit_repo(
+                            &p.root,
+                            &refs[start + k],
+                            &p.rules,
+                            p.cfg.clone(),
+                            p.broken.clone(),
+                            p.note.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+    });
+
+    out
 }
 
 fn note_config(list: &mut Vec<String>, path: &str) {
@@ -370,16 +561,43 @@ fn audit_repo(
     repo: &scan::RepoRef,
     rules: &Rules,
     repo_cfg: Option<String>,
+    cfg_broken: Option<String>,
+    cfg_note: Option<String>,
 ) -> RepoAudit {
     let path = PathBuf::from(&repo.path);
     let mut findings: Vec<Finding> = Vec::new();
     let mut branch: Option<String> = None;
     let mut error: Option<String> = None;
 
+    // 脏树算不算阻断，看严格模式：从工作区直接打包的团队必须当阻断，
+    // 其余人只是在写代码——把它当阻断会让每台机器都全红，门禁就废了。
+    let dirty_sev = if rules.strict {
+        Severity::Error
+    } else {
+        Severity::Warn
+    };
+
+    if let Some(note) = cfg_note {
+        findings.push(Finding::new("config-note", Severity::Warn, Scope::Release, note));
+    }
+    if let Some(broken) = &cfg_broken {
+        findings.push(Finding::new(
+            "config-error",
+            Severity::Error,
+            Scope::Release,
+            "仓库级配置读不了，这条仓库按上一层规则跑的，结论不可信".to_string(),
+        ).with_detail(Some(broken.clone())));
+    }
+
     match git::status_lite(&path) {
         Err(e) => {
             error = Some(e.clone());
-            findings.push(Finding::new("read-error", Severity::Error, format!("读不到仓库状态：{e}")));
+            findings.push(Finding::new(
+                "read-error",
+                Severity::Error,
+                Scope::Release,
+                format!("读不到仓库状态：{e}"),
+            ));
         }
         Ok(st) => {
             branch = st.branch.clone();
@@ -389,6 +607,7 @@ fn audit_repo(
                 findings.push(Finding::new(
                     "conflict",
                     Severity::Error,
+                    Scope::Release,
                     format!("有 {} 个文件处于冲突状态", st.conflicted),
                 ));
             }
@@ -399,18 +618,22 @@ fn audit_repo(
                     findings.push(Finding::new(
                         "operation",
                         Severity::Error,
+                        Scope::Release,
                         format!("{op} 还没做完，仓库停在中途状态"),
                     ));
                 }
             }
 
-            // 3. 未提交改动
+            // 3. 未提交改动。默认只是提示：几乎每台开发机在任何时刻都有未提交的活，
+            //    把它算阻断的结果是「全员全红」，而那正是这个工具最难用的地方。
+            //    严格模式下提回阻断（从工作区直接打包发版时它就是真风险）。
             let dirty = st.staged as usize + st.unstaged as usize + st.untracked as usize;
             if dirty > 0 && !rules.skipped("dirty") {
                 findings.push(
                     Finding::new(
                         "dirty",
-                        Severity::Error,
+                        dirty_sev,
+                        Scope::Workspace,
                         format!(
                             "有 {dirty} 处未提交改动（{} 暂存 / {} 未暂存 / {} 未跟踪）",
                             st.staged, st.unstaged, st.untracked
@@ -425,6 +648,7 @@ fn audit_repo(
                 findings.push(Finding::new(
                     "detached",
                     Severity::Error,
+                    Scope::Release,
                     "HEAD 已分离，不在任何分支上".to_string(),
                 ));
             }
@@ -436,6 +660,7 @@ fn audit_repo(
                     Finding::new(
                         "unpushed",
                         Severity::Error,
+                        Scope::Release,
                         format!("有 {} 个提交还没推到 {up}", st.ahead),
                     )
                     .with_detail(Some("别人拿到的代码里没有这些提交".to_string())),
@@ -447,6 +672,7 @@ fn audit_repo(
                 findings.push(Finding::new(
                     "behind",
                     Severity::Warn,
+                    Scope::Workspace,
                     format!("落后远程 {} 个提交", st.behind),
                 ));
             }
@@ -456,6 +682,7 @@ fn audit_repo(
                 findings.push(Finding::new(
                     "no-upstream",
                     Severity::Warn,
+                    Scope::Workspace,
                     "当前分支没有上游分支".to_string(),
                 ));
             }
@@ -465,6 +692,7 @@ fn audit_repo(
                 findings.push(Finding::new(
                     "stash",
                     Severity::Warn,
+                    Scope::Workspace,
                     format!("有 {} 条 stash 没清理", st.stashes),
                 ));
             }
@@ -476,6 +704,7 @@ fn audit_repo(
                         findings.push(Finding::new(
                             "branch",
                             Severity::Error,
+                            Scope::Release,
                             format!(
                                 "当前分支 {b} 不在允许列表里（允许：{}）",
                                 rules.branch_allow.join(" / ")
@@ -497,14 +726,15 @@ fn audit_repo(
                 findings.push(Finding::new(
                     "no-remote",
                     Severity::Info,
+                    Scope::Release,
                     "没有配置远程仓库".to_string(),
                 ));
             }
         }
     }
 
-    // 稳定的严重级别排序：ERROR 一定在最前面，同级别保持上面写好的语义顺序
-    findings.sort_by_key(|f| f.severity);
+    // 先按严重级别、再按分组：ERROR 在最前，同级里发版状态排在「工作区还有活」前面
+    findings.sort_by_key(|f| (f.severity, f.scope));
 
     RepoAudit {
         name: repo.name.clone(),
@@ -604,6 +834,7 @@ fn unmerged_finding(repo: &Path, prefer: Option<&str>, current: Option<&str>) ->
                 Finding::new(
                     "unmerged",
                     Severity::Warn,
+                    Scope::Workspace,
                     format!("基准分支 {b} 在这个仓库里不存在，本条未生效"),
                 )
             })
@@ -618,6 +849,7 @@ fn unmerged_finding(repo: &Path, prefer: Option<&str>, current: Option<&str>) ->
             return Some(Finding::new(
                 "unmerged",
                 Severity::Warn,
+                Scope::Workspace,
                 format!("查不到未合并分支：{}", clip(&e, 120)),
             ))
         }
@@ -638,6 +870,7 @@ fn unmerged_finding(repo: &Path, prefer: Option<&str>, current: Option<&str>) ->
         Finding::new(
             "unmerged",
             Severity::Warn,
+            Scope::Workspace,
             format!("有 {} 个本地分支没合并进 {base}", rest.len()),
         )
         .with_detail(Some(shown.join("、"))),
@@ -658,6 +891,11 @@ pub fn render_text(report: &Report) -> String {
     out.push_str(&format!("根目录  {}\n", report.roots.join("；")));
     out.push_str(&format!("深度    {}\n", report.depth));
     out.push_str(&format!("基准    {}\n", base_text(report)));
+    out.push_str(&format!("模式    {}\n", mode_text(report)));
+    // 用不了的根目录放在最前面说：它会让整份报告缺东西，不能藏在结尾
+    for e in &report.root_errors {
+        out.push_str(&format!("不可用  {e}（已跳过，其余照常）\n"));
+    }
     if !report.branch_allow.is_empty() {
         out.push_str(&format!("允许分支  {}\n", report.branch_allow.join(" / ")));
     }
@@ -711,14 +949,28 @@ pub fn render_text(report: &Report) -> String {
 
     let t = &report.totals;
     out.push_str(&format!(
-        "{} 个仓库：{} 通过 / {} 未通过 · {} error / {} warn · {:.1}s\n",
+        "{} 个仓库：{} 未通过 / {} 通过 · {} 阻断 / {} 提示 · 结论：{} · {:.1}s\n",
         t.repos,
-        t.passed,
         t.failed,
+        t.passed,
         t.errors,
-        t.warnings,
+        t.warnings + t.infos,
+        report.verdict_word(),
         report.elapsed_ms as f64 / 1000.0
     ));
+    // 全红问题的另一半：就算都没有阻断项，也要让人一眼看到「有活没提交」，
+    // 否则会以为报告漏了东西。
+    if t.workspace > 0 {
+        out.push_str(&format!(
+            "工作区  {} 个仓库有待提交 / stash / 落后远程（只提示，{}）\n",
+            t.workspace,
+            if report.strict {
+                "严格模式下已计入阻断"
+            } else {
+                "--strict 时算阻断"
+            }
+        ));
+    }
     out
 }
 
@@ -731,6 +983,7 @@ pub fn render_markdown(report: &Report) -> String {
     out.push_str(&format!("| 根目录 | {} |\n", code_join(&report.roots)));
     out.push_str(&format!("| 扫描深度 | {} |\n", report.depth));
     out.push_str(&format!("| 基准分支 | {} |\n", base_text(report)));
+    out.push_str(&format!("| 检查模式 | {} |\n", mode_text(report)));
     if !report.branch_allow.is_empty() {
         out.push_str(&format!(
             "| 允许分支 | {} |\n",
@@ -746,15 +999,18 @@ pub fn render_markdown(report: &Report) -> String {
             report.config_files.len()
         ));
     }
+    for e in &report.root_errors {
+        out.push_str(&format!("| 跳过的根目录 | {} |\n", md_escape(e)));
+    }
     out.push_str(&format!("| 结论 | **{}** |\n", report.verdict_word()));
     out.push('\n');
     out.push_str(&format!(
-        "{} 个仓库：{} 通过 / {} 未通过 · {} error / {} warn · {:.1}s\n\n",
+        "{} 个仓库：{} 未通过 / {} 通过 · {} 阻断 / {} 提示 · {:.1}s\n\n",
         t.repos,
-        t.passed,
         t.failed,
+        t.passed,
         t.errors,
-        t.warnings,
+        t.warnings + t.infos,
         report.elapsed_ms as f64 / 1000.0
     ));
 
@@ -801,6 +1057,32 @@ pub fn render_markdown(report: &Report) -> String {
         }
     }
 
+    // 工作区单独一节：这些不是阻断项，但发版单上通常要交代一句「谁手上还有活」。
+    // 只列通过的仓库——未通过的在上面已经把自己的 dirty 写在表里了。
+    let workspace: Vec<&RepoAudit> = passed
+        .iter()
+        .copied()
+        .filter(|r| r.workspace_pending())
+        .collect();
+    if !workspace.is_empty() {
+        out.push_str(&format!(
+            "## 工作区（{}，不计入结论）\n\n\
+             这些仓库有未提交改动 / stash / 落后远程。不影响「能不能发」，\
+             但如果你是从工作区直接打包的，用 `--strict` 再跑一遍。\n\n\
+             | 仓库 | 分支 | 待处理 |\n| --- | --- | --- |\n",
+            workspace.len()
+        ));
+        for repo in &workspace {
+            out.push_str(&format!(
+                "| {} | `{}` | {} |\n",
+                md_escape(&repo.name),
+                md_escape(repo.branch.as_deref().unwrap_or("detached")),
+                md_escape(&repo.workspace_note())
+            ));
+        }
+        out.push('\n');
+    }
+
     if !passed.is_empty() {
         out.push_str(&format!("## 已通过（{}）\n\n", passed.len()));
         for repo in passed {
@@ -814,6 +1096,10 @@ pub fn render_markdown(report: &Report) -> String {
                     " · 跳过 {}",
                     md_escape(&repo.effective_skip.join(", "))
                 ));
+            }
+            // 脏着过的仓库要标出来：不然「全部通过」会被读成「什么都不用管」
+            if repo.workspace_pending() {
+                tag.push_str(" · 工作区有活");
             }
             out.push_str(&format!(
                 "- {} `{}`{}\n",
@@ -847,6 +1133,9 @@ pub fn command_line(opts: &Options) -> String {
     if !opts.skip.is_empty() {
         parts.push(format!("--skip \"{}\"", opts.skip.join(",")));
     }
+    if opts.strict == Some(true) {
+        parts.push("--strict".to_string());
+    }
     if !opts.use_config {
         parts.push("--no-config".to_string());
     }
@@ -871,6 +1160,15 @@ fn base_text(report: &Report) -> String {
     match &report.base {
         Some(b) => b.clone(),
         None => "自动探测（main / master / develop）".to_string(),
+    }
+}
+
+/// 两种模式的区别就一句话：脏树算不算阻断。
+fn mode_text(report: &Report) -> String {
+    if report.strict {
+        "严格（未提交改动算阻断）".to_string()
+    } else {
+        "默认（未提交改动只提示）".to_string()
     }
 }
 
@@ -1142,5 +1440,99 @@ mod tests {
         // 没指定 depth 就别写死一个，否则会把配置文件里的值压掉
         assert!(!cmd.contains("--depth"), "{cmd}");
         assert!(!cmd.contains("--branch"), "{cmd}");
+    }
+
+    /// 造一个「只有 dirty 一条」的仓库结果，用来验证结论分档
+    fn dirty_only(strict: bool) -> RepoAudit {
+        let sev = if strict {
+            Severity::Error
+        } else {
+            Severity::Warn
+        };
+        RepoAudit {
+            name: "api".into(),
+            path: "D:/w/api".into(),
+            root: "D:/w".into(),
+            branch: Some("main".into()),
+            findings: vec![Finding::new("dirty", sev, Scope::Workspace, "有 1 处未提交改动")],
+            config: None,
+            effective_skip: vec![],
+            error: None,
+        }
+    }
+
+    #[test]
+    fn dirty_alone_does_not_block_by_default() {
+        // 这就是「全亮红」的根因：以前 dirty 是阻断，于是每台开发机都全红。
+        let r = dirty_only(false);
+        assert!(!r.failed());
+        assert!(r.workspace_pending());
+        assert!(r.workspace_note().contains("未提交"));
+    }
+
+    #[test]
+    fn strict_mode_promotes_dirty_to_blocker() {
+        let r = dirty_only(true);
+        assert!(r.failed());
+    }
+
+    #[test]
+    fn verdict_has_three_states() {
+        // 没有 finding：通过
+        let mut repos = vec![dirty_only(false)];
+        repos[0].findings.clear();
+        let base = Report {
+            generated_at: String::new(),
+            roots: vec![],
+            depth: 1,
+            base: None,
+            branch_allow: vec![],
+            skipped: vec![],
+            strict: false,
+            config_files: vec![],
+            root_errors: vec![],
+            repos,
+            totals: Totals {
+                repos: 1,
+                passed: 1,
+                ..Default::default()
+            },
+            verdict: Verdict::Passed,
+            elapsed_ms: 0,
+        };
+        assert_eq!(base.verdict.word(), "通过");
+
+        // 有提示、没阻断：注意（能发，但报告里要交代一句）
+        assert_eq!(Verdict::Attention.word(), "注意");
+        assert_eq!(Verdict::Blocked.word(), "未通过");
+
+        // 根目录不可用：没有 error，但报告缺东西，不能算通过
+        let mut broken_root = base;
+        broken_root.root_errors = vec!["D:/nope：目录不存在".into()];
+        assert!(!broken_root.passed(), "根目录不可用时不能算通过");
+        assert_eq!(broken_root.totals.errors, 0);
+        // 三种结论的字面不能重复，否则报告上分不出来
+        let words = [Verdict::Passed.word(), Verdict::Attention.word(), Verdict::Blocked.word()];
+        assert_eq!(
+            words.iter().collect::<HashSet<_>>().len(),
+            3,
+            "三个结论的词要互不相同"
+        );
+    }
+
+    #[test]
+    fn strict_flag_lands_in_the_command_line() {
+        let opts = Options {
+            roots: vec![PathBuf::from(".")],
+            strict: Some(true),
+            ..Default::default()
+        };
+        assert!(command_line(&opts).contains("--strict"));
+        // 没显式给就不写：写了会盖掉配置文件里的 strict
+        let opts = Options {
+            roots: vec![PathBuf::from(".")],
+            ..Default::default()
+        };
+        assert!(!command_line(&opts).contains("--strict"));
     }
 }

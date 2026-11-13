@@ -1379,7 +1379,8 @@ body {
   gap: 10px;
 }
 .audit-field > span { color: var(--text-2); font-size: 12px; letter-spacing: .02em; }
-.audit-field input {
+.audit-field input,
+.audit-field select {
   height: 28px;
   padding: 0 9px;
   background: rgba(6, 16, 23, 0.75);
@@ -1388,8 +1389,10 @@ body {
   color: var(--text);
   font: 12px var(--mono);
 }
+.audit-field select { cursor: pointer; font-family: inherit; }
 .audit-field input::placeholder { color: var(--dim); }
-.audit-field input:focus { outline: none; border-color: var(--line-hot); }
+.audit-field input:focus,
+.audit-field select:focus { outline: none; border-color: var(--line-hot); }
 
 .audit-skips { display: flex; flex-wrap: wrap; gap: 14px; }
 
@@ -1446,6 +1449,10 @@ body {
 }
 .audit-verdict.ok { color: var(--add); border-color: rgba(127, 201, 154, 0.45); background: rgba(127, 201, 154, 0.07); }
 .audit-verdict.bad { color: var(--del); border-color: rgba(217, 99, 87, 0.45); background: rgba(217, 99, 87, 0.07); }
+/* 「注意」：没有阻断项，但有活没提交。不能给绿（会让人以为什么都不用管），
+   也不该给红（那是给真阻断的）。 */
+.audit-verdict.warn { color: var(--mod); border-color: rgba(217, 154, 74, 0.45); background: rgba(217, 154, 74, 0.07); }
+.audit-ws { color: var(--mod); font-size: 12px; }
 .audit-nums { color: var(--text-2); font-size: 12px; }
 
 .audit-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
@@ -1458,6 +1465,8 @@ body {
 }
 .audit-row.fail { border-left-color: var(--del); }
 .audit-row.pass { border-left-color: rgba(127, 201, 154, 0.45); }
+.audit-row.pass.todo { border-left-color: rgba(217, 154, 74, 0.5); }
+.audit-row.pass.todo .audit-dot { background: var(--mod); }
 
 .audit-head { display: flex; align-items: center; gap: 8px; }
 .audit-dot { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--add); }

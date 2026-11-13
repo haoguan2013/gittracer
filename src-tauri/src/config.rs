@@ -30,6 +30,9 @@ pub struct FileConfig {
     pub branch: Option<Vec<String>>,
     pub base: Option<String>,
     pub skip: Vec<String>,
+    /// 严格模式：`dirty` 算不算阻断。写进文件是为了让「从工作区打包发版」的团队
+    /// 在本地和 CI 拿到同一个结论，而不是每次记得加 `--strict`。
+    pub strict: Option<bool>,
 }
 
 impl FileConfig {
@@ -46,6 +49,7 @@ struct Raw {
     base: Option<String>,
     #[serde(default)]
     skip: Vec<String>,
+    strict: Option<bool>,
 }
 
 /// 目录里有没有配置文件。只认这一层，不往上找：扫描根目录是用户显式给的，
@@ -66,7 +70,8 @@ pub fn load(path: &Path, rules: &[&str]) -> Result<FileConfig, String> {
     let raw: Raw = toml::from_str(&text).map_err(|e| {
         format!(
             "配置文件 {} 有错：{e}\n\
-             支持的键：depth（1~16）、branch（字符串数组）、base（字符串）、skip（字符串数组）",
+             支持的键：depth（1~16）、branch（字符串数组）、base（字符串）、\
+             skip（字符串数组）、strict（true / false）",
             path.display()
         )
     })?;
@@ -124,6 +129,7 @@ pub fn load(path: &Path, rules: &[&str]) -> Result<FileConfig, String> {
         branch,
         base: raw.base.map(|b| b.trim().to_string()),
         skip,
+        strict: raw.strict,
     })
 }
 
@@ -133,15 +139,17 @@ pub struct Rules {
     pub branch_allow: Vec<String>,
     pub base: Option<String>,
     pub skip: Vec<String>,
+    pub strict: bool,
 }
 
 impl Rules {
-    /// 三层合并。`cli_*` 是命令行 / 界面显式给的值，`repo` 是仓库自带的文件，
+    /// 四层合并。`cli_*` 是命令行 / 界面显式给的值，`repo` 是仓库自带的文件，
     /// `root` 是根目录那份。
     pub fn resolve(
         cli_branch: Option<&[String]>,
         cli_base: Option<&str>,
         cli_skip: &[String],
+        cli_strict: Option<bool>,
         repo: Option<&FileConfig>,
         root: Option<&FileConfig>,
     ) -> Self {
@@ -174,6 +182,12 @@ impl Rules {
             branch_allow,
             base,
             skip,
+            // 和 branch / base 一样从外往里覆盖：命令行显式给的最优先，
+            // 其次是仓库文件，再是根目录文件。
+            strict: cli_strict
+                .or_else(|| repo.and_then(|c| c.strict))
+                .or_else(|| root.and_then(|c| c.strict))
+                .unwrap_or(false),
         }
     }
 
@@ -259,7 +273,34 @@ mod tests {
 
     #[test]
     fn rejects_depth_out_of_range() {
-        assert!(load(&tmp("deep", "depth = 40\n"), RULES).is_err());
+        let err = load(&tmp("deep", "depth = 40\n"), RULES).unwrap_err();
+        assert!(err.contains("1~16"), "{err}");
+    }
+
+    #[test]
+    fn strict_is_read_from_file() {
+        assert_eq!(load(&tmp("strict", "strict = true\n"), RULES).unwrap().strict, Some(true));
+        // 没写就是 None（= 交给上一层），不能默认成 false 把根目录的设置压掉
+        assert_eq!(load(&tmp("nostrict", "base = \"main\"\n"), RULES).unwrap().strict, None);
+    }
+
+    #[test]
+    fn strict_follows_the_same_layering() {
+        let repo = FileConfig {
+            strict: Some(false),
+            ..Default::default()
+        };
+        let root = FileConfig {
+            strict: Some(true),
+            ..Default::default()
+        };
+        // 命令行说了算，哪怕文件和它相反
+        assert!(Rules::resolve(None, None, &[], Some(true), Some(&repo), Some(&root)).strict);
+        assert!(!Rules::resolve(None, None, &[], Some(false), Some(&repo), Some(&root)).strict);
+        // 命令行没给：仓库文件盖根目录
+        assert!(!Rules::resolve(None, None, &[], None, Some(&repo), Some(&root)).strict);
+        // 都没有：默认不严格（否则又回到全红）
+        assert!(!Rules::resolve(None, None, &[], None, None, None).strict);
     }
 
     #[test]
@@ -277,7 +318,7 @@ mod tests {
             ..Default::default()
         };
         let cli = vec!["cli".to_string()];
-        let r = Rules::resolve(Some(&cli), Some("cli-base"), &[], Some(&repo), Some(&root));
+        let r = Rules::resolve(Some(&cli), Some("cli-base"), &[], None, Some(&repo), Some(&root));
         assert_eq!(r.branch_allow, vec!["cli"]);
         assert_eq!(r.base.as_deref(), Some("cli-base"));
         // skip 是并集，命令行没给就吃文件
@@ -295,7 +336,7 @@ mod tests {
             base: Some("main".into()),
             ..Default::default()
         };
-        let r = Rules::resolve(None, None, &[], Some(&repo), Some(&root));
+        let r = Rules::resolve(None, None, &[], None, Some(&repo), Some(&root));
         assert_eq!(r.branch_allow, vec!["repo"]);
         // 仓库没写 base，落到根目录那份
         assert_eq!(r.base.as_deref(), Some("main"));
@@ -311,7 +352,7 @@ mod tests {
             branch: Some(vec!["main".into()]),
             ..Default::default()
         };
-        let r = Rules::resolve(None, None, &[], Some(&repo), Some(&root));
+        let r = Rules::resolve(None, None, &[], None, Some(&repo), Some(&root));
         assert!(r.branch_allow.is_empty());
     }
 }

@@ -1904,6 +1904,9 @@ const auditState = {
   base: '',
   depth: '',
   useConfig: true,
+  // '' = 跟随配置文件；'1' = 严格；'0' = 只提示。用字符串是因为
+  // 「没指定」和「显式关掉」必须分开，否则界面会把文件里的 strict 压掉。
+  strict: '',
   skip: [],
 };
 
@@ -1914,6 +1917,7 @@ function loadAuditPrefs() {
     if (typeof o.base === 'string') auditState.base = o.base;
     if (typeof o.depth === 'string') auditState.depth = o.depth;
     if (typeof o.useConfig === 'boolean') auditState.useConfig = o.useConfig;
+    if (o.strict === '1' || o.strict === '0' || o.strict === '') auditState.strict = o.strict;
     if (Array.isArray(o.skip)) auditState.skip = o.skip.filter((x) => typeof x === 'string');
   } catch (_) { /* 坏掉的配置当没有 */ }
 }
@@ -1927,6 +1931,7 @@ function saveAuditPrefs() {
         base: auditState.base,
         depth: auditState.depth,
         useConfig: auditState.useConfig,
+        strict: auditState.strict,
         skip: auditState.skip,
       })
     );
@@ -1959,6 +1964,14 @@ function auditFormHtml() {
       <input id="auditDepth" type="number" min="1" max="16" value="${esc(auditState.depth)}"
              placeholder="留空 = 配置文件 / 4" spellcheck="false" autocomplete="off" />
     </label>
+    <label class="audit-field">
+      <span>检查模式</span>
+      <select id="auditStrict">
+        <option value=""${auditState.strict === '' ? ' selected' : ''}>跟随配置文件（没配置就是只提示）</option>
+        <option value="1"${auditState.strict === '1' ? ' selected' : ''}>严格：未提交改动也算不能发</option>
+        <option value="0"${auditState.strict === '0' ? ' selected' : ''}>宽松：未提交改动只提示</option>
+      </select>
+    </label>
     <div class="audit-skips">
       ${AUDIT_SKIP_OPTIONS.map(
         (s) =>
@@ -1986,20 +1999,36 @@ function auditResultHtml() {
   const r = auditState.report;
   if (!r) {
     return `<div class="audit-empty dim">
-      还没跑。默认检查：未提交改动、冲突、未推送、detached HEAD、未完成的合并 / 变基、
-      落后远程、无上游、stash、分支是否符合规则、遗留的本地分支。<br />
+      还没跑。检查分两类：<b>发版状态</b>（冲突、半途的合并 / 变基、detached HEAD、未推送、
+      分支不符合规则）不过就是阻断；<b>工作区</b>（未提交改动、stash、落后远程、遗留分支）
+      只提示——几乎每台开发机都有没提交的活，把它当阻断会让每个仓库都变红，结论就没有信息量了。
+      要从工作区直接打包发版，把「检查模式」切成严格。<br />
       规则可以写进目录里的 <code>.gittracer.toml</code> 跟着仓库走，命令行
       <code>gittracer-audit</code> 读的是同一份，按返回码判定。
     </div>`;
   }
 
   const t = r.totals || {};
-  const ok = !t.errors;
+  const verdict = r.verdict || (t.errors ? 'blocked' : t.warnings ? 'attention' : 'passed');
+  const verdictWord = verdict === 'blocked' ? '未通过' : verdict === 'attention' ? '注意' : '通过';
+  const verdictCls = verdict === 'blocked' ? 'bad' : verdict === 'attention' ? 'warn' : 'ok';
+  const hints = (t.warnings || 0) + (t.infos || 0);
   const cfgCount = (r.config_files || []).length;
   const head = `<div class="audit-sum">
-    <span class="audit-verdict ${ok ? 'ok' : 'bad'}">${ok ? '通过' : '未通过'}</span>
-    <span class="audit-nums">${t.repos || 0} 个仓库 · ${t.passed || 0} 通过 / ${t.failed || 0} 未通过
-      · ${t.errors || 0} error / ${t.warnings || 0} warn · ${((r.elapsed_ms || 0) / 1000).toFixed(1)}s</span>
+    <span class="audit-verdict ${verdictCls}" title="${
+      verdict === 'blocked'
+        ? '有阻断项，现在发出去会出问题'
+        : verdict === 'attention'
+        ? '没有阻断项，但有提示需要看一眼'
+        : '没有阻断项，也没有提示'
+    }">${verdictWord}</span>
+    <span class="audit-nums">${t.repos || 0} 个仓库 · ${t.failed || 0} 未通过 / ${t.passed || 0} 通过
+      · ${t.errors || 0} 阻断 / ${hints} 提示 · ${((r.elapsed_ms || 0) / 1000).toFixed(1)}s</span>
+    ${
+      r.strict
+        ? `<span class="audit-tag skip" title="未提交改动也算阻断">严格模式</span>`
+        : ''
+    }
     ${
       cfgCount
         ? `<span class="audit-cfg-note" title="${esc(
@@ -2007,7 +2036,19 @@ function auditResultHtml() {
           )}">依据 ${cfgCount} 个 .gittracer.toml</span>`
         : ''
     }
-  </div>`;
+  </div>${
+    (r.root_errors || []).length
+      ? `<div class="audit-empty err">这些根目录用不了，已跳过（其余照常）：${(r.root_errors || [])
+          .map((e) => esc(e))
+          .join('；')}</div>`
+      : ''
+  }${
+    t.workspace
+      ? `<div class="audit-ws">${t.workspace} 个仓库工作区有活（未提交改动 / stash / 落后远程）${
+          r.strict ? '，已计入阻断' : '，只提示不影响结论'
+        }</div>`
+      : ''
+  }`;
 
   if (!r.repos || !r.repos.length) {
     return `${head}<div class="audit-empty">这个目录下没找到 Git 仓库。</div>`;
@@ -2016,6 +2057,9 @@ function auditResultHtml() {
   const rows = r.repos
     .map((repo) => {
       const failed = (repo.findings || []).some((f) => f.severity === 'error');
+      // 通过但有活没提交：绿灯会让「全部通过」被读成「什么都不用管」，
+      // 所以这种行用琥珀色左边条，和真通过区分开。
+      const todo = !failed && (repo.findings || []).some((f) => f.scope === 'workspace');
       const findings = (repo.findings || [])
         .map(
           (f) => `<li class="audit-finding">
@@ -2028,7 +2072,7 @@ function auditResultHtml() {
           </li>`
         )
         .join('');
-      return `<li class="audit-row ${failed ? 'fail' : 'pass'}">
+      return `<li class="audit-row ${failed ? 'fail' : todo ? 'pass todo' : 'pass'}">
         <div class="audit-head">
           <span class="audit-dot"></span>
           <span class="audit-name">${esc(repo.name)}</span>
@@ -2059,7 +2103,7 @@ function auditResultHtml() {
     <div class="audit-foot">
       <button class="btn small" id="auditCopyMd">复制报告（Markdown）</button>
       <button class="btn small" id="auditCopyCmd">复制命令行</button>
-      <span class="dim">命令行返回码：0 通过 / 1 未通过</span>
+      <span class="dim">命令行返回码：0 没有阻断项（可能带提示）/ 1 有阻断项</span>
     </div>`;
 }
 
@@ -2093,6 +2137,8 @@ async function runAudit() {
   const cfgEl = document.getElementById('auditUseConfig');
   auditState.depth = depthEl ? depthEl.value.trim() : '';
   auditState.useConfig = cfgEl ? cfgEl.checked : true;
+  const strictEl = document.getElementById('auditStrict');
+  auditState.strict = strictEl ? strictEl.value : '';
   auditState.skip = [...els.modalBody.querySelectorAll('[data-skip]:checked')].map((x) => x.dataset.skip);
   saveAuditPrefs();
 
@@ -2123,6 +2169,8 @@ async function runAudit() {
       base: auditState.base || null,
       skip: auditState.skip,
       useConfig: auditState.useConfig,
+      // '' = 没指定，交给 .gittracer.toml；否则是用户明确选的那一档
+      strict: auditState.strict === '1' ? true : auditState.strict === '0' ? false : null,
     });
     auditState.report = res.report || null;
     auditState.markdown = res.markdown || '';

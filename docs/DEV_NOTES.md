@@ -278,6 +278,40 @@ docs/
 
 ## 更新记录
 
+**0.8.0**
+
+- **`dirty` 从阻断降为提示，`Finding` 多一个 `scope` 字段**（`release` / `workspace`）。起因是
+  在真实开发机上跑出「全红」：35 个仓库 12 个未通过，失败原因全是 `dirty`，最小的只改了一个
+  `package-lock.json`。「未通过」因此等价于「这个仓库你摸过」，没有信息量。
+  规则按「发出去的那个提交有没有毛病」分成两组：`conflict` / `operation` / `detached` /
+  `unpushed` / `branch` / `read-error` 算 release（阻断），`dirty` / `behind` / `stash` /
+  `unmerged` / `no-upstream` 算 workspace（提示），`no-remote` 是 info。
+- **结论三态**：`Verdict::{Passed, Attention, Blocked}` → 通过 / 注意 / 未通过。
+  `Report::passed()` 仍然是「没有阻断项」（退出码用它），但文案和界面按三档显示。
+- **严格模式 `strict`**：`Options.strict: Option<bool>` + `Rules.strict`，四级来源
+  命令行/界面 > 仓库文件 > 根目录文件 > 默认 false；界面是三态下拉（跟随配置 / 严格 / 宽松），
+  CLI 是 `--strict` / `--no-strict`。为「从工作区直接打包发版」的团队保留原来的判定。
+- **配置错误隔离**：仓库级 `.gittracer.toml` 解析失败不再让整次巡退出码 2，改成该仓库记一条
+  `config-error`（阻断 + 原始报错），其余仓库照常。仓库里写了 `depth` 也不再硬失败：
+  它只管「从根目录往下找几层」，现在给一条 `config-note`（提示），其余设置照常生效。
+  根目录那份仍然硬失败——它管整次运行，静默忽略就是「以为在拦、其实没拦」。
+- **`Report.root_errors`**：给进来但用不了的根目录（不存在 / 不是目录）不再让整次 run 报错，
+  也不再静默跳过——能用的照跑，不可用的进报告头部，结论判 Blocked、`passed()` 为 false，
+  退出码 1。全部根目录都不可用时才直接返回 Err。
+- **并行巡检**：`run_repos()` 用 `std::thread::scope` 按 `available_parallelism`（上限 8）
+  切块并发，结果顺序不变。35 个仓库 91.9 s → 11.2 s；268 个仓库（深度 4）93.5 s。
+  某块线程 panic 时退回串行重跑那一段，不允许悄悄少几个仓库。
+- `audit::command_line()` 在有 `--strict` 时把它带上，复制的命令行和界面状态一致。
+- 渲染：text/md 都多一行/一节「工作区（不计入结论）」；md 的「已通过」列表给有活没提交的仓库
+  加「工作区有活」标记，免得「全部通过」被读成「什么都不用管」。
+- 单测 32 → 38：`dirty_alone_does_not_block_by_default`、`strict_mode_promotes_dirty_to_blocker`、
+  `verdict_has_three_states`（含 root_errors 不算通过）、`strict_flag_lands_in_the_command_line`、
+  `strict_is_read_from_file`、`strict_follows_the_same_layering`。
+- 文档：README 重写巡检章节并新增英文版 `README.en.md`；重拍 `docs/audit.png`
+  （旧图拍的就是「全红」现场）和 `docs/audit-config.png`；`tools/make-demo-data.ps1` 给
+  `alpha-api` 建本地 bare 远程并推送（截图里需要一个真正干净的仓库），`gamma-service` 改成两边
+  改同一行才会真冲突（以前改不同位置，git 自己合掉了）。
+
 **0.7.0**
 
 - 新增 **`.gittracer.toml` 规则文件**：规则不再只活在命令行参数和界面输入里，写成文件后跟着仓库
