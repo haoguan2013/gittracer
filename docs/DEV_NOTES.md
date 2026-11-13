@@ -278,6 +278,56 @@ docs/
 
 ## 更新记录
 
+**0.7.0**
+
+- 新增 **`.gittracer.toml` 规则文件**：规则不再只活在命令行参数和界面输入里，写成文件后跟着仓库
+  进版本库，本地和 CI 读同一份。两处位置——`<根目录>/.gittracer.toml` 管整批仓库（还能定 `depth`），
+  `<仓库>/.gittracer.toml` 只覆盖一个仓库；优先级是「命令行 / 界面显式给的 > 仓库文件 > 根目录文件 >
+  内置默认」。`branch = []` 与不写 `branch` 是两件事（明确不检查 vs 继承），`skip` 只做并集。
+- 新增 `src-tauri/src/config.rs`（含 `check_ref_like`，`audit::validate` 改为复用它）；依赖 `toml`
+  0.9，关掉 `display` 一侧，只留 `std` + `parse` + `serde`。
+- **解析失败一律硬失败**（退出码 2，报文件名和位置）：键名拼错、规则名拼错、`depth` 越界、
+  值以 `-` 开头或含引号，都不做「读不懂就忽略」。被静默忽略的规则就是假通过。
+- 报告里补审计线索：`Report.config_files` 列出本次读到的全部配置文件，`RepoAudit.config` 标出
+  仓库自带的配置，`RepoAudit.effective_skip` 记下该仓库实际生效的跳过项；text / md 里对「靠本地
+  配置放宽过」的仓库显式标注（md 的已通过列表也会写「跳过 xxx」），json 里是结构化字段。
+- `Options` 改成分层：`depth: Option<u32>`、`branch_allow: Option<Vec<String>>`（`None` = 没指定，
+  `Some(vec![])` = 明确不检查）、新增 `use_config`。CLI 加 `--no-config`，界面加「使用目录里的
+  `.gittracer.toml`」勾选框和「扫描深度」输入（留空 = 配置 / 4）。
+- 32 个单测通过（新增 11 个：配置解析、未知键 / 未知规则、`--` 前缀与引号、depth 越界、
+  三档优先级、空数组语义、`same_skip`、`command_line` 的 `--no-config`）。
+- **使用注意（写进 README）**：配置文件本身没提交时会被 `dirty` 数进去，第一次用会看到
+  「未提交改动（.gittracer.toml）」，这是提醒把它一起提交，不是 bug。
+
+**0.6.0**
+
+- 新增**发版前巡检**：界面右上角「巡检」，对扫描到的所有仓库跑一套固定规则（冲突 / 半途的
+  merge·rebase / 未提交改动 / detached HEAD / 未推送 / 落后远程 / 无上游 / stash / 分支白名单 /
+  遗留分支 / 无远程），按「未通过 / 已通过」出结论，可一键复制 Markdown 报告或等价命令行。
+- 新增**命令行程序 `gittracer-audit.exe`**：与 GUI 同一份规则（`audit.rs`），console 子系统，
+  三档输出（text / md / json），退出码 `0` 通过 / `1` 有阻断项 / `2` 参数或环境错误，可以直接当
+  CI 门禁。Windows 下临时切控制台代码页到 65001 输出中文，退出时还原，不把父控制台改坏。
+- 为巡检新增 `git::status_lite`（跳过 `--numstat`，只要计数）和 `git::git_lines`（按行取查询结果）。
+- **修掉一个去重缺陷**：同一个仓库经「根目录本身」拿到的是用户输入的分隔符（可能是 `/`），
+  遍历出来的子目录是 `\`，只做 `toLowerCase` 时字符串不相等，多根目录下会重复计一个仓库。
+  巡检与界面扫描都改成先统一分隔符再比（Rust `audit::path_key` / JS `pathKey`）。
+- 打包脚本带上 `gittracer-audit.exe`，安装脚本存在则一并复制。
+- 新增 **GitHub Actions 工作流** `.github/workflows/audit.yml`：打 `v*` 标签自动跑、也能在 Actions
+  页面填参数手动跑，别的仓库可以 `uses:` 复用；报告写进 job summary 并留 artifact，返回码非 0 就失败。
+  必须 `fetch-depth: 0`——浅克隆里没有远程跟踪分支，`ahead` / `behind` / `branch --no-merged` 全算 0，
+  检查会静默变成「全部通过」。
+- **复查时修掉的四处**：`file_diff` 补上 `check_rel_path`（未跟踪文件预览原先能靠 `../` 读到仓库外，
+  提交那条路径本来就有这层校验，diff 漏了）；`--base` / `--branch` 拒绝以 `-` 开头和含引号 / 控制字符的
+  取值（`--base --all` 会被 git 当成选项，命令失败后被跳过，结论照样「通过」）；显式给的基准分支在某个
+  仓库里不存在时出 WARN 而不是静默跳过；`path_key` 归一末尾分隔符（`D:\work\repo\` 和 `D:\work\repo`
+  会被数成两个仓库）。
+- 报告渲染：Markdown 转义控制字符（文件名里可以有换行，会把表格拆坏）；文本报告按显示宽度对齐中文仓库名。
+- `git` 子进程不再继承 `GIT_DIR` / `GIT_WORK_TREE` / `GIT_INDEX_FILE`——shell 里 export 过这三个变量的话，
+  所有命令都会指向别的仓库，对 `reset` / `commit` 就是真事故。
+- WebView2 侧开了 CSP（原先 `security.csp` 是 `null`）：`script-src 'self'`、`connect-src ipc:
+  http://ipc.localhost`，只给 style 放行内联（界面里大量 `style="margin-left:…"`）。仓库内容渲染本来就
+  全部走 `esc()`，这层是防以后某处漏转义。
+
 **0.5.0**
 
 - **界面整套重做**：配色与元素按 HUD 风格来——深蓝黑底、1px 青色细线框、超大字距的全大写小标签、

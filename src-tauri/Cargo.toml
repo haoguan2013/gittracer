@@ -1,6 +1,6 @@
 [package]
 name = "git-tracer"
-version = "0.5.0"
+version = "0.7.0"
 description = "Git Tracer - 一眼看清目录下所有仓库的待提交内容"
 authors = [""]
 edition = "2021"
@@ -9,6 +9,16 @@ edition = "2021"
 name = "git_tracer_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
+# 两个可执行文件：GUI 主程序 + 只跑巡检的控制台程序。
+# 后者必须是 console 子系统才能拿到 stdout，所以不能合进主程序。
+[[bin]]
+name = "git-tracer"
+path = "src/main.rs"
+
+[[bin]]
+name = "gittracer-audit"
+path = "src/bin/audit.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -16,6 +26,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# 只为了读 `.gittracer.toml`；关掉 display 一侧，少链一个写回 TOML 的库
+toml = { version = "0.9", default-features = false, features = ["std", "parse", "serde"] }
 
 [profile.release]
 panic = "abort"

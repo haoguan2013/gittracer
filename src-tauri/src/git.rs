@@ -188,6 +188,11 @@ fn run_git_timeout(exe: &Path, cwd: &Path, args: &[&str], timeout: Duration) -> 
         .args(args)
         // 任何交互式凭据提示都不该出现在扫描流程里
         .env("GIT_TERMINAL_PROMPT", "0")
+        // 父进程里若带着这些变量（有人在 shell 里 export 过 GIT_DIR），
+        // 命令会指向别的仓库；对 reset / commit 这种写操作就是真事故。
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -270,6 +275,31 @@ fn run_git_timeout(exe: &Path, cwd: &Path, args: &[&str], timeout: Duration) -> 
 
 fn stdout_text(out: &Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// 跑一条只读查询命令，按行返回 stdout（已 trim、去掉空行）。
+///
+/// 只给「拿一份列表」的场景用（巡检要分支名、要某个引用是否存在），
+/// 失败一律转成中文错误，不把裸 exit code 抛给调用方。
+pub fn git_lines(repo: &Path, args: &[&str]) -> Result<Vec<String>, String> {
+    let exe = git_exe().ok_or_else(|| {
+        "未找到 git.exe，请先安装 Git for Windows 后重启本程序。".to_string()
+    })?;
+    let out = run_git(&exe, repo, args)?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let name = args.first().copied().unwrap_or("命令");
+        return Err(if err.is_empty() {
+            format!("git {name} 执行失败")
+        } else {
+            format!("git {name} 失败：{err}")
+        });
+    }
+    Ok(stdout_text(&out)
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect())
 }
 
 /// 解析 git 的 C 风格引号路径（`"a\tb"` / 八进制 UTF-8 字节）。
@@ -408,7 +438,20 @@ fn head_meta(exe: &Path, repo: &Path) -> (Option<String>, Option<String>, Option
     (None, None, None)
 }
 
+/// 界面用的完整状态：带每个文件的行数统计。
 pub fn status(repo: &Path) -> Result<RepoStatus, String> {
+    status_impl(repo, true)
+}
+
+/// 巡检用的轻量状态：只要计数和文件清单，不要 `+N/-N`。
+///
+/// 行数统计是每个仓库额外一次 `git diff --numstat`，在几十个巨型仓库上
+/// 加起来能占到巡检总耗时的一半，而巡检只关心「有没有改动」。
+pub fn status_lite(repo: &Path) -> Result<RepoStatus, String> {
+    status_impl(repo, false)
+}
+
+fn status_impl(repo: &Path, with_numstat: bool) -> Result<RepoStatus, String> {
     let exe = git_exe().ok_or_else(|| {
         "未找到 git.exe，请先安装 Git for Windows 后重启本程序。".to_string()
     })?;
@@ -576,12 +619,15 @@ pub fn status(repo: &Path) -> Result<RepoStatus, String> {
         }
     }
 
-    // 行数统计：一个额外 git 调用换来列表里的 +N/-N
-    let numstat = numstat_map(&exe, repo);
-    for e in entries.iter_mut() {
-        if let Some((add, del)) = numstat.get(&e.path) {
-            e.additions = *add;
-            e.deletions = *del;
+    // 行数统计：一个额外 git 调用换来列表里的 +N/-N。
+    // 巡检走 status_lite，跳过这一段。
+    if with_numstat {
+        let numstat = numstat_map(&exe, repo);
+        for e in entries.iter_mut() {
+            if let Some((add, del)) = numstat.get(&e.path) {
+                e.additions = *add;
+                e.deletions = *del;
+            }
         }
     }
 
@@ -651,6 +697,9 @@ pub fn file_diff(repo: &Path, file: &str, staged: bool, untracked: bool) -> Resu
     if !repo.is_dir() {
         return Err(format!("目录不存在：{}", repo.display()));
     }
+    // 未跟踪文件是直接 fs::read 的，不校验就能用 `../../x` 读到仓库外的文件；
+    // 提交那条路径本来就有这层校验，diff 这边漏了，补齐。
+    check_rel_path(file)?;
     let full = repo.join(file);
     if !full.starts_with(repo) {
         return Err("非法路径".to_string());

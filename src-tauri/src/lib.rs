@@ -5,6 +5,8 @@
 //! 同步命令会被内联在 IPC 线程（Windows 上就是 UI 主线程）执行，扫描几百个
 //! 目录会直接把窗口卡死。
 
+pub mod audit;
+pub mod config;
 mod dialog;
 mod git;
 mod scan;
@@ -135,6 +137,62 @@ async fn reset_repo(path: String, hash: String, mode: String) -> Result<git::Res
     blocking(move || git::reset_to(&repo, &hash, &mode)).await
 }
 
+/// 巡检结果包：报告本体 + 可直接复制的 Markdown + 可贴进 CI 的命令行。
+#[derive(serde::Serialize)]
+struct AuditEnvelope {
+    report: audit::Report,
+    markdown: String,
+    command: String,
+}
+
+/// 发版 / 交付前的多仓库巡检（只读）
+///
+/// `depth` / `branch` 传空表示「没指定」，这时会去读目录里的 `.gittracer.toml`；
+/// `use_config = false` 则完全不看配置文件，行为和 0.6 一致。
+#[tauri::command]
+async fn audit_repos(
+    roots: Vec<String>,
+    depth: Option<u32>,
+    branch: Vec<String>,
+    base: Option<String>,
+    skip: Vec<String>,
+    use_config: Option<bool>,
+) -> Result<AuditEnvelope, String> {
+    let opts = audit::Options {
+        roots: roots
+            .into_iter()
+            .filter(|r| !r.trim().is_empty())
+            .map(std::path::PathBuf::from)
+            .collect(),
+        depth: depth.map(|d| d.clamp(1, 16)),
+        branch_allow: if branch.is_empty() {
+            None
+        } else {
+            Some(
+                branch
+                    .into_iter()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+            )
+        },
+        base: base
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        skip,
+        use_config: use_config.unwrap_or(true),
+        ..audit::Options::default()
+    };
+    let command = audit::command_line(&opts);
+    let report = blocking(move || audit::run(&opts)).await?;
+    let markdown = audit::render_markdown(&report);
+    Ok(AuditEnvelope {
+        report,
+        markdown,
+        command,
+    })
+}
+
 /// 系统「选择文件夹」对话框
 #[tauri::command]
 async fn pick_folder(initial: Option<String>) -> Result<Option<String>, String> {
@@ -219,6 +277,7 @@ pub fn run() {
             pull_repo,
             reset_plan,
             reset_repo,
+            audit_repos,
             pick_folder,
             reveal_path
         ])

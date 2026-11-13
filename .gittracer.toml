@@ -1,0 +1,16 @@
+# Git Tracer 自己的巡检规则。这个文件同时也是 .gittracer.toml 的用法示例：
+# 放在仓库根上跟着版本库走，本地和 CI 读的是同一份。
+# 键只有四个：depth / branch / base / skip，拼错会直接报错，不会静默忽略。
+
+# 只在根目录那份里有效（仓库级配置写 depth 会被拒绝）
+depth = 3
+
+# 发版只认 main；要放过 hotfix 分支就写成 ["main", "hotfix/*"]
+branch = ["main"]
+
+# 「有分支没合并进 main」按这个基准算
+base = "main"
+
+# 落后远程只是提示，不影响能不能发。
+# 注意 skip 只能加不能减，命令行给的不会被这里的空数组清掉。
+skip = ["behind"]

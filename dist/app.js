@@ -40,6 +40,7 @@ const els = {
   browseBtn: $('browseBtn'),
   scanBtn: $('scanBtn'),
   refreshBtn: $('refreshBtn'),
+  auditBtn: $('auditBtn'),
   depthSel: $('depthSel'),
   dirtyOnly: $('dirtyOnly'),
   statRepos: $('statRepos'),
@@ -117,6 +118,10 @@ function trimRoot(p) {
   return s.length > 3 ? s.replace(/[\\/]+$/, '') : s;
 }
 
+/** 去重用的路径键：统一分隔符 + 不分大小写。
+ *  同一个目录可能被写成 D:/x，也可能被遍历回来时写成 D:\x，字符串不相等但确实是同一个。 */
+const pathKey = (p) => String(p || '').replace(/\//g, '\\').toLowerCase();
+
 /** 同一个目录只留一个（Windows 路径不分大小写） */
 function dedupeRoots(list) {
   const seen = new Set();
@@ -124,7 +129,7 @@ function dedupeRoots(list) {
   for (const raw of list) {
     const p = trimRoot(raw);
     if (!p) continue;
-    const k = p.toLowerCase();
+    const k = pathKey(p);
     if (seen.has(k)) continue;
     seen.add(k);
     out.push(p);
@@ -272,7 +277,7 @@ function renderRoots() {
 function addRoot(raw) {
   const p = trimRoot(raw);
   if (!p) return false;
-  if (state.roots.some((r) => r.toLowerCase() === p.toLowerCase())) {
+  if (state.roots.some((r) => pathKey(r) === pathKey(p))) {
     toast('这个目录已经在列表里了');
     return false;
   }
@@ -1444,7 +1449,7 @@ function closeModal(result) {
 }
 
 /** 打开一个确认框；resolve(true/false)。focus 可指定打开后聚焦的元素选择器 */
-function askModal({ title, html, okText, cancelText, showCancel, focus }) {
+function askModal({ title, html, okText, cancelText, showCancel, focus, wide }) {
   if (modalDone) closeModal(false);
   return new Promise((resolve) => {
     modalDone = resolve;
@@ -1454,6 +1459,8 @@ function askModal({ title, html, okText, cancelText, showCancel, focus }) {
     els.modalOk.disabled = false;
     els.modalCancel.textContent = cancelText || '取消';
     els.modalCancel.hidden = showCancel === false;
+    const box = els.modalWrap.querySelector('.modal');
+    if (box) box.classList.toggle('wide', !!wide);
     els.modalWrap.hidden = false;
     const target = focus ? els.modalBody.querySelector(focus) : null;
     if (target) {
@@ -1877,6 +1884,263 @@ async function openPushBoard() {
 }
 
 
+/* ---------- 发版前巡检 ---------- */
+
+/** 巡检选项：分支规则跟基准分支存在本地，下次打开还在 */
+const AUDIT_SKIP_OPTIONS = [
+  { id: 'stash', label: '忽略 stash' },
+  { id: 'unmerged', label: '忽略遗留分支' },
+  { id: 'behind', label: '忽略落后远程' },
+];
+const AUDIT_PREF_KEY = 'git-tracer.audit.v1';
+
+const auditState = {
+  report: null,
+  markdown: '',
+  command: '',
+  error: '',
+  running: false,
+  branch: '',
+  base: '',
+  depth: '',
+  useConfig: true,
+  skip: [],
+};
+
+function loadAuditPrefs() {
+  try {
+    const o = JSON.parse(localStorage.getItem(AUDIT_PREF_KEY) || '{}');
+    if (typeof o.branch === 'string') auditState.branch = o.branch;
+    if (typeof o.base === 'string') auditState.base = o.base;
+    if (typeof o.depth === 'string') auditState.depth = o.depth;
+    if (typeof o.useConfig === 'boolean') auditState.useConfig = o.useConfig;
+    if (Array.isArray(o.skip)) auditState.skip = o.skip.filter((x) => typeof x === 'string');
+  } catch (_) { /* 坏掉的配置当没有 */ }
+}
+
+function saveAuditPrefs() {
+  try {
+    localStorage.setItem(
+      AUDIT_PREF_KEY,
+      JSON.stringify({
+        branch: auditState.branch,
+        base: auditState.base,
+        depth: auditState.depth,
+        useConfig: auditState.useConfig,
+        skip: auditState.skip,
+      })
+    );
+  } catch (_) { /* 忽略 */ }
+}
+
+/** 两组跳过项是否一样（顺序、大小写不算差异）；不一样才在行上标出来 */
+function skipDiff(a, b) {
+  const norm = (list) => (Array.isArray(list) ? list.map((x) => String(x).toLowerCase()).sort() : []);
+  const x = norm(a);
+  const y = norm(b);
+  return x.length !== y.length || x.some((v, i) => v !== y[i]);
+}
+
+function auditFormHtml() {
+  const checked = (id) => (auditState.skip.includes(id) ? ' checked' : '');
+  return `<div class="audit-form">
+    <label class="audit-field">
+      <span>允许分支</span>
+      <input id="auditBranch" value="${esc(auditState.branch)}"
+             placeholder="main, release/*（留空 = 不检查）" spellcheck="false" autocomplete="off" />
+    </label>
+    <label class="audit-field">
+      <span>基准分支</span>
+      <input id="auditBase" value="${esc(auditState.base)}"
+             placeholder="留空 = 自动探测 main / master" spellcheck="false" autocomplete="off" />
+    </label>
+    <label class="audit-field">
+      <span>扫描深度</span>
+      <input id="auditDepth" type="number" min="1" max="16" value="${esc(auditState.depth)}"
+             placeholder="留空 = 配置文件 / 4" spellcheck="false" autocomplete="off" />
+    </label>
+    <div class="audit-skips">
+      ${AUDIT_SKIP_OPTIONS.map(
+        (s) =>
+          `<label class="check"><input type="checkbox" data-skip="${s.id}"${checked(s.id)} /><span>${s.label}</span></label>`
+      ).join('')}
+    </div>
+    <label class="check audit-cfg">
+      <input type="checkbox" id="auditUseConfig"${auditState.useConfig ? ' checked' : ''} />
+      <span>使用目录里的 <code>.gittracer.toml</code></span>
+    </label>
+    <div class="audit-actions">
+      <button class="btn primary small" id="auditRunBtn"${auditState.running ? ' disabled' : ''}>
+        ${auditState.running ? '巡检中…' : auditState.report ? '重新巡检' : '开始巡检'}
+      </button>
+      <span class="dim">只读检查，不动任何仓库</span>
+    </div>
+    <div id="auditResult" class="audit-result">${auditResultHtml()}</div>
+  </div>`;
+}
+
+function auditResultHtml() {
+  if (auditState.error) {
+    return `<div class="audit-empty err">${esc(auditState.error)}</div>`;
+  }
+  const r = auditState.report;
+  if (!r) {
+    return `<div class="audit-empty dim">
+      还没跑。默认检查：未提交改动、冲突、未推送、detached HEAD、未完成的合并 / 变基、
+      落后远程、无上游、stash、分支是否符合规则、遗留的本地分支。<br />
+      规则可以写进目录里的 <code>.gittracer.toml</code> 跟着仓库走，命令行
+      <code>gittracer-audit</code> 读的是同一份，按返回码判定。
+    </div>`;
+  }
+
+  const t = r.totals || {};
+  const ok = !t.errors;
+  const cfgCount = (r.config_files || []).length;
+  const head = `<div class="audit-sum">
+    <span class="audit-verdict ${ok ? 'ok' : 'bad'}">${ok ? '通过' : '未通过'}</span>
+    <span class="audit-nums">${t.repos || 0} 个仓库 · ${t.passed || 0} 通过 / ${t.failed || 0} 未通过
+      · ${t.errors || 0} error / ${t.warnings || 0} warn · ${((r.elapsed_ms || 0) / 1000).toFixed(1)}s</span>
+    ${
+      cfgCount
+        ? `<span class="audit-cfg-note" title="${esc(
+            (r.config_files || []).join('\n')
+          )}">依据 ${cfgCount} 个 .gittracer.toml</span>`
+        : ''
+    }
+  </div>`;
+
+  if (!r.repos || !r.repos.length) {
+    return `${head}<div class="audit-empty">这个目录下没找到 Git 仓库。</div>`;
+  }
+
+  const rows = r.repos
+    .map((repo) => {
+      const failed = (repo.findings || []).some((f) => f.severity === 'error');
+      const findings = (repo.findings || [])
+        .map(
+          (f) => `<li class="audit-finding">
+            <span class="sev ${esc(f.severity)}">${
+              f.severity === 'error' ? 'ERROR' : f.severity === 'warn' ? 'WARN' : 'INFO'
+            }</span>
+            <code>${esc(f.code)}</code>
+            <span class="audit-msg">${esc(f.message)}</span>
+            ${f.detail ? `<div class="audit-detail">${esc(f.detail)}</div>` : ''}
+          </li>`
+        )
+        .join('');
+      return `<li class="audit-row ${failed ? 'fail' : 'pass'}">
+        <div class="audit-head">
+          <span class="audit-dot"></span>
+          <span class="audit-name">${esc(repo.name)}</span>
+          <span class="branch">${esc(repo.branch || 'detached')}</span>
+          ${
+            repo.config
+              ? `<span class="audit-tag" title="${esc(repo.config)}">本地配置</span>`
+              : ''
+          }
+          ${
+            skipDiff(repo.effective_skip, r.skipped)
+              ? `<span class="audit-tag skip" title="本仓库跳过：${esc(
+                  repo.effective_skip.join(', ')
+                )}">跳过 ${(repo.effective_skip || []).length}</span>`
+              : ''
+          }
+          <span class="grow"></span>
+          <button class="icon-mini" data-reveal="${esc(repo.path)}" title="在资源管理器中打开">&#8599;</button>
+        </div>
+        <div class="audit-path" title="${esc(nicePath(repo.path))}">${esc(nicePath(repo.path))}</div>
+        ${findings ? `<ul class="audit-findings">${findings}</ul>` : ''}
+      </li>`;
+    })
+    .join('');
+
+  return `${head}
+    <ul class="audit-list">${rows}</ul>
+    <div class="audit-foot">
+      <button class="btn small" id="auditCopyMd">复制报告（Markdown）</button>
+      <button class="btn small" id="auditCopyCmd">复制命令行</button>
+      <span class="dim">命令行返回码：0 通过 / 1 未通过</span>
+    </div>`;
+}
+
+function openAuditPanel() {
+  if (!state.roots.length) {
+    toast('先添加要扫描的目录', true);
+    els.rootInput.focus();
+    return;
+  }
+  auditState.report = null;
+  auditState.markdown = '';
+  auditState.command = '';
+  auditState.error = '';
+  askModal({
+    title: '发版前巡检',
+    html: auditFormHtml(),
+    okText: '关闭',
+    showCancel: false,
+    focus: '#auditBranch',
+    wide: true,
+  });
+}
+
+async function runAudit() {
+  if (auditState.running) return;
+  const branchEl = document.getElementById('auditBranch');
+  const baseEl = document.getElementById('auditBase');
+  auditState.branch = branchEl ? branchEl.value.trim() : '';
+  auditState.base = baseEl ? baseEl.value.trim() : '';
+  const depthEl = document.getElementById('auditDepth');
+  const cfgEl = document.getElementById('auditUseConfig');
+  auditState.depth = depthEl ? depthEl.value.trim() : '';
+  auditState.useConfig = cfgEl ? cfgEl.checked : true;
+  auditState.skip = [...els.modalBody.querySelectorAll('[data-skip]:checked')].map((x) => x.dataset.skip);
+  saveAuditPrefs();
+
+  auditState.running = true;
+  auditState.error = '';
+  auditState.report = null;
+
+  const btn = document.getElementById('auditRunBtn');
+  const box = document.getElementById('auditResult');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '巡检中…';
+  }
+  if (box) {
+    box.innerHTML =
+      `<div class="audit-empty"><span class="spinner" style="display:inline-block;vertical-align:-2px"></span>` +
+      ` 正在跑 ${state.roots.length} 个根目录…</div>`;
+  }
+  els.modalOk.disabled = true;
+
+  try {
+    // 空 = 交给 .gittracer.toml，再没有就按 4 层；不在这里替用户填死
+    const depthNum = parseInt(auditState.depth, 10);
+    const res = await invoke('audit_repos', {
+      roots: state.roots,
+      depth: Number.isFinite(depthNum) ? depthNum : null,
+      branch: auditState.branch ? auditState.branch.split(',').map((s) => s.trim()).filter(Boolean) : [],
+      base: auditState.base || null,
+      skip: auditState.skip,
+      useConfig: auditState.useConfig,
+    });
+    auditState.report = res.report || null;
+    auditState.markdown = res.markdown || '';
+    auditState.command = res.command || '';
+  } catch (e) {
+    auditState.error = errText(e);
+  } finally {
+    auditState.running = false;
+    els.modalOk.disabled = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '重新巡检';
+    }
+    const out = document.getElementById('auditResult');
+    if (out) out.innerHTML = auditResultHtml();
+  }
+}
+
 /* ---------- 扫描 ---------- */
 let rafPending = false;
 function scheduleRender() {
@@ -1999,7 +2263,7 @@ async function scan() {
     for (const e of res.errors || []) errors.push(e);
     for (const r of res.repos || []) {
       // 嵌套的根目录会把同一个仓库扫两遍，按规范路径去重（Windows 不分大小写）
-      const key = String(r.path).toLowerCase();
+      const key = pathKey(r.path);
       if (seen.has(key)) continue;
       seen.add(key);
       repos.push({ ...r, root });
@@ -2138,6 +2402,22 @@ function bind() {
       pushRows([...els.modalBody.querySelectorAll('.push-row')]);
       return;
     }
+    if (btn.id === 'auditRunBtn') {
+      runAudit();
+      return;
+    }
+    if (btn.id === 'auditCopyMd') {
+      copyText(auditState.markdown, '巡检报告已复制（Markdown）');
+      return;
+    }
+    if (btn.id === 'auditCopyCmd') {
+      copyText(auditState.command, '命令行已复制');
+      return;
+    }
+    if (btn.hasAttribute('data-reveal')) {
+      invoke('reveal_path', { path: btn.dataset.reveal }).catch((e) => toast(errText(e), true));
+      return;
+    }
     if (btn.hasAttribute('data-push')) {
       const row = btn.closest('.push-row');
       if (row) pushRows([row]);
@@ -2149,6 +2429,12 @@ function bind() {
       e.preventDefault();
       editCommitAfter = true;
       closeModal(true);
+      return;
+    }
+    // 巡检的两个输入框里回车就等于「开始巡检」
+    if (e.key === 'Enter' && (e.target.id === 'auditBranch' || e.target.id === 'auditBase')) {
+      e.preventDefault();
+      runAudit();
     }
   });
 
@@ -2171,6 +2457,7 @@ function bind() {
 
   els.scanBtn.onclick = () => scan();
   els.refreshBtn.onclick = () => scan();
+  els.auditBtn.onclick = () => openAuditPanel();
 
   els.browseBtn.onclick = async () => {
     try {
@@ -2255,6 +2542,7 @@ function bind() {
 /* ---------- 启动 ---------- */
 async function init() {
   readPrefs();
+  loadAuditPrefs();
   els.rootInput.value = '';
   if (![...els.depthSel.options].some((o) => Number(o.value) === state.depth)) {
     state.depth = 4;

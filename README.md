@@ -1,10 +1,10 @@
 # Git Tracer
 
-![Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6) ![Tauri 2 + Rust](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20Rust-DEA584) ![零构建前端](https://img.shields.io/badge/Frontend-HTML%20%2F%20CSS%20%2F%20JS-3178C6) ![v0.5.0](https://img.shields.io/badge/Version-0.5.0-2F81F7)
+![Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6) ![Tauri 2 + Rust](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20Rust-DEA584) ![零构建前端](https://img.shields.io/badge/Frontend-HTML%20%2F%20CSS%20%2F%20JS-3178C6) ![v0.7.0](https://img.shields.io/badge/Version-0.7.0-2F81F7)
 
 > 一次扫描，把一堆仓库里没提交的、冲突的、还没推的东西，全摆到一张桌上。
 
-Git Tracer 是款 Windows 小工具：给它一个目录，自动找出所有 Git 仓库，把待提交改动、冲突和未推送提交汇总到一屏；支持勾选提交、一键推拉、分支树与回滚。默认只读，点按钮才写仓库。
+Git Tracer 是款 Windows 小工具：给它一个目录，自动找出所有 Git 仓库，把待提交改动、冲突和未推送提交汇总到一屏；支持勾选提交、一键推拉、分支树与回滚。发版前还能跑一遍巡检，按一套固定规则给每个仓库判通过 / 未通过。规则可以写进 `.gittracer.toml` 跟仓库一起走，界面和 CI 读的是同一份，结论一致、凭返回码判定。默认只读，点按钮才写仓库。
 
 ![Git Tracer 主界面：左边仓库列表、中间文件列表、右边 diff](docs/screenshot.png)
 
@@ -88,6 +88,111 @@ flowchart LR
 
 - **记得住**：根目录列表、扫描深度、过滤开关、当前标签页都存在本地，下次打开还在。
 
+### 发版前，先体检一遍
+
+点右上角「巡检」。它不问改了什么，只回答一个问题：**这些仓库现在能不能发。**
+
+对目录下每个仓库跑同一套规则，逐条给结论：
+
+| 规则 | 级别 | 什么时候不过 |
+| --- | --- | --- |
+| `conflict` | 阻断 | 有文件还处于冲突状态 |
+| `operation` | 阻断 | merge / rebase / cherry-pick / revert / bisect 停在中途 |
+| `dirty` | 阻断 | 有未提交改动（暂存、未暂存、未跟踪分开计数） |
+| `detached` | 阻断 | HEAD 不在任何分支上 |
+| `unpushed` | 阻断 | 有提交没推到上游 |
+| `branch` | 阻断 | 当前分支不在允许列表里（`main`、`release/*` 这种写法都认） |
+| `behind` | 提示 | 落后远程 |
+| `stash` / `unmerged` / `no-upstream` | 提示 | stash 没清、有分支没合并进基准分支、当前分支没有上游 |
+| `no-remote` | 说明 | 仓库没配远程 |
+| `read-error` | 阻断 | 读不到仓库状态（目录不可读 / git 报错），不可跳过 |
+
+结果按「未通过 / 已通过」排开，每条写清是哪条规则、涉及几个文件。底部两个按钮：**复制报告（Markdown）** 可以直接贴进发版单，**复制命令行** 拿去接 CI。
+
+![巡检：每条结论都写明是哪条规则、几个文件](docs/audit.png)
+
+命令行版是包里的另一个小程序 `gittracer-audit.exe`（console 程序，不弹窗口）：
+
+```powershell
+gittracer-audit --root D:\work --branch "main,release/*" --base main
+```
+
+退出码 `0` 通过、`1` 有阻断项、`2` 参数或目录有问题，所以 CI 里直接这么用：
+
+```yaml
+- run: gittracer-audit --root . --branch "main,release/*" --fail-on error
+```
+
+`--format text|md|json`、`--out 报告.md`、`--skip stash,unmerged` 都支持，`gittracer-audit --help` 看全量参数。它和界面一样只读：不 fetch、不写任何引用、不碰工作区。
+
+### 把规则放进仓库
+
+命令行参数和界面输入只活在这一次运行里，换台机器、换个人、换到 CI 就没了。规则写成 `.gittracer.toml` 之后会跟着仓库走，谁 clone 下来跑出来的结论都一样：
+
+```toml
+# .gittracer.toml
+depth = 3                      # 只在根目录那份里有效
+branch = ["main", "release/*"]
+base = "main"
+skip = ["behind", "stash"]
+```
+
+两个位置，从外到内：
+
+| 放在哪 | 管什么 |
+| --- | --- |
+| `<根目录>/.gittracer.toml` | 这个目录下的所有仓库，还能定 `depth`（1~16；界面下拉只给到 12，写文件能更深） |
+| `<仓库>/.gittracer.toml` | 只覆盖这一个仓库，写 `depth` 会直接报错 |
+
+优先级：**命令行 / 界面显式给的 > 仓库文件 > 根目录文件 > 内置默认**。「没写」和「写空」是两件事——不写 `branch` 就继承上一层，写 `branch = []` 才是明确不检查分支。`skip` 只做并集，越外层越宽，文件里的空数组不会把命令行给的清掉。
+
+四条刻意设成这样的规则：
+
+- **解析失败一律当错误**（退出码 2，报出文件名和位置）。拼错键名或规则名如果被静默忽略，结果就是「以为在拦、其实没拦」，和假通过一样危险。
+- **仓库能靠本地配置放宽判定，但报告会写明**。`--format md` 里会给这条仓库标上「依据仓库配置」和「跳过 xxx」，`json` 里是 `config` / `effective_skip` 字段。门禁允许你解释，但不允许悄悄放过。
+- **`--no-config`（界面里是那个勾选框）整个关掉配置文件**，行为和 0.6 一样，用于排查「到底是配置还是环境的问题」。
+- **配置文件自己也要提交**。它是普通文件，没提交就会被 `dirty` 数进去——第一次用会看到「有 1 处未提交改动（.gittracer.toml）」，这不是 bug，是提醒你把它跟代码一起提交。
+
+![规则放进仓库后，靠本地配置放宽的仓库会被标出来](docs/audit-config.png)
+
+### 接在 CI 后面
+
+仓库里带了一份现成的工作流 [`.github/workflows/audit.yml`](.github/workflows/audit.yml)：打 `v*` 标签时自动跑，也能在 Actions 页面手动填目录 / 允许分支 / 忽略项跑。别的仓库可以直接复用：
+
+```yaml
+jobs:
+  audit:
+    uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.7.0
+    with:
+      roots: '.'
+      branch: 'main,release/*'
+```
+
+它自己编译 `gittracer-audit`，不依赖已经发布的安装包；报告写进 job summary 并作为 artifact 留档，返回码非 0 就让 job 失败。输入项留空就吃仓库里的 `.gittracer.toml`：`depth`、允许分支、基准、跳过项都能写在文件里，工作流只负责跑。（`@v0.7.0` 是发版后的 tag，还没打就先写 `@main`。）不想在 CI 里编 Rust 的话，把「构建巡检程序」那步换成从 Releases 取现成的：
+
+```yaml
+- run: |
+    gh release download --repo haoguan2013/gittracer --pattern "GitTracer-*-portable.zip" --dir pkg
+    Expand-Archive (Get-ChildItem pkg/*.zip).FullName -DestinationPath pkg/bin
+  env:
+    GH_TOKEN: ${{ github.token }}
+```
+
+两个坑写在前面：
+
+- **必须全量检出**（`fetch-depth: 0`）。浅克隆里没有远程跟踪分支，`ahead` / `behind` / `branch --no-merged` 全是 0，检查会静默变成「全部通过」——这比跑不起来更危险。
+- 打 tag 触发时检出的是游离 HEAD，所以工作流默认带 `--skip detached`；如果你在分支上跑，把这项去掉才能真正拦住 detached。
+
+## 和别的多仓库工具怎么分工
+
+这类工具已经不少，选之前先分清自己要的是哪一件：
+
+- **只想扫一眼谁脏了、谁落后了**：终端里的聚合器（`gfold`、`gv` 这一类）更轻，几十毫秒出结果，扫完就走。它们不回答「能不能发」。
+- **要按 hunk 暂存、交互式 rebase、图形化解冲突**：用成熟的单仓 Git 客户端，那才是它们的主场。Git Tracer 明确不做这些。
+- **要把「一批仓库能不能发」变成可复现的判定**：这是它唯一的重点 —— 规则跟着仓库走、界面和命令行共用同一份、报告能直接归档进发版单。
+
+换句话说：它不想做成更快的 `git status`，也不打算做成更全的 Git 客户端，只做发版前那一次逐仓核对。
+
 ## 常用快捷键
 
 | 按键 | 作用 |
@@ -111,11 +216,11 @@ flowchart LR
 | 扫描、看状态、看 diff、看分支树、搜索、回滚前的体检 | 不会（只读命令 + `--no-optional-locks`） |
 | 提交选中、拉取、推送、回滚 | 会，且都要你点按钮或过确认框 |
 
-另外三条硬规则：提交信息为空直接拒绝；只接受仓库内的相对路径（绝对路径、`..`、盘符都拒）；推送不做 force，凭据要提前在命令行配好（`GIT_TERMINAL_PROMPT=0`，程序不会替你弹登录框）。
+另外几条硬规则：提交信息为空直接拒绝；**提交和差异预览都只接受仓库内的相对路径**（绝对路径、`..`、盘符一律拒，所以预览读不到仓库外的文件）；推送不做 force；凭据要提前在命令行配好（`GIT_TERMINAL_PROMPT=0`，程序不会替你弹登录框）；`git` 子进程不继承 `GIT_DIR` / `GIT_WORK_TREE` / `GIT_INDEX_FILE`，不会被 shell 里的同名变量带去改别的仓库；界面开着 CSP（`script-src 'self'`），仓库内容的渲染全部走转义。
 
 ## 下载与安装
 
-到本仓库的 **Releases** 页面下载 `GitTracer-0.5.0-portable.zip`（仓库里不放二进制包，也可以按下面的命令自己生成）：
+到本仓库的 **Releases** 页面下载 `GitTracer-0.7.0-portable.zip`（仓库里不放二进制包，也可以按下面的命令自己生成）：
 
 | 方式 | 做法 | 说明 |
 | --- | --- | --- |
@@ -141,23 +246,28 @@ pnpm tauri build    # release exe + NSIS 安装包
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\make-package.ps1
 ```
 
-产物在 `src-tauri/target/release/git-tracer.exe` 和 `GitTracer-0.5.0-portable.zip`。`tools/` 里还有生成测试仓库的 `make-demo-data.ps1`、生成图标的 `make-icons.py`（纯标准库）、以及用 CDP 驱动界面截图的 `cdp.mjs`。
+产物在 `src-tauri/target/release/git-tracer.exe`、同目录下的 `gittracer-audit.exe`，以及 `GitTracer-0.7.0-portable.zip`。`tools/` 里还有生成测试仓库的 `make-demo-data.ps1`、生成图标的 `make-icons.py`（纯标准库）、以及用 CDP 驱动界面截图的 `cdp.mjs`。
 
 ### 项目怎么搭的
 
 ```
 dist/                 前端：index.html + styles.css + app.js，没有打包器，直接改
 src-tauri/src/
-  main.rs             入口
-  lib.rs              Tauri Builder 与 13 个 async 命令
+  main.rs             GUI 入口
+  bin/audit.rs        巡检命令行入口（gittracer-audit.exe）
+  lib.rs              Tauri Builder 与 14 个 async 命令
+  audit.rs            巡检规则、报告渲染、退出码（只读，不依赖 Tauri）
+  config.rs           .gittracer.toml 的解析、校验与三层合并
   git.rs              跑 git 命令、解析 porcelain v2 / numstat / diff / log
   scan.rs             目录遍历找 .git
   dialog.rs           文件夹选择、资源管理器定位
+.gittracer.toml       本仓库自己的巡检规则，也是配置文件的现成示例
 tools/                打包、安装、造测试数据、图标、CDP 调试
-docs/                 截图 + 开发排障笔记
+.github/workflows/    发版前巡检的 CI 工作流
+docs/                 截图 + 开发排障笔记 + 版本说明
 ```
 
-技术选型很朴素：Rust 后端只负责跑 git 和解析输出，前端是三个原生文件，通过 Tauri 的 `invoke` 调后端。**没有 React/Vue，也没有构建步骤**，clone 下来就能读懂全貌。
+技术选型很朴素：Rust 后端只负责跑 git 和解析输出，前端是三个原生文件，通过 Tauri 的 `invoke` 调后端。**没有 React/Vue，也没有构建步骤**，clone 下来就能读懂全貌。巡检逻辑放在独立的 `audit.rs` 里，不依赖 Tauri，所以 GUI 和命令行两个入口共用同一份规则。
 
 <details>
 <summary>后端命令接口（给想改代码的人）</summary>
@@ -171,6 +281,7 @@ docs/                 截图 + 开发排障笔记
 | `repo_graph` / `commit_diff` | `path, limit?` / `path, hash` | 提交图、某个提交的补丁 |
 | `commit_files` / `push_repo` / `pull_repo` | 见源码 | 提交、推、拉的结果 |
 | `reset_plan` / `reset_repo` | `path, hash[, mode]` | 只读取体检 / 执行回滚 |
+| `audit_repos` | `roots[], depth?, branch[], base?, skip[], useConfig?` | 巡检报告 + Markdown + 等价命令行 |
 | `pick_folder` / `reveal_path` | `initial?` / `path` | 系统对话框、定位文件 |
 
 所有 git 调用统一带 `--no-optional-locks`、`core.quotepath=false`、`GIT_TERMINAL_PROMPT=0`。单仓库 status 超时 60 s，单文件 diff 30 s，diff 预览上限 2 MiB，push / pull 5 分钟。
@@ -185,5 +296,8 @@ docs/                 截图 + 开发排障笔记
 - **推送只推当前分支**：不 force，不推 tag，不切分支、不合并、不打 tag。
 - **分支树只读**：最多 300 个提交；「回滚」是 `git reset`，不是 `git revert`（不会生成反向提交），撤销的提交得自己去 reflog 捞。
 - **凭据要提前配好**：需要交互式输入用户名密码时 git 会直接报错，请先配好凭据管理器或 SSH key。
+- **巡检不联网**：不跑 `git fetch`，所以「落后远程几个提交」用的是本地远程跟踪分支的旧值。想让它准，先在命令行 `git fetch --all`，或者靠近时手动拉一次。
+- **巡检不会替你修**：它只判通过 / 未通过，不自动提交、不自动推送，也没有 `--fix`。要修回界面里点。
+- **配置只能放宽，不能收紧**：`skip` 在多层配置之间只做并集，仓库里的 `.gittracer.toml` 没法把根目录已经跳过的规则重新打开。少拦一条比多拦一条危险，所以宁可让你去改更外层那份。
 
-完整版本记录、本机构建踩坑、`GIT_TRACER_DATA_DIR` 等环境变量说明，都在 [docs/DEV_NOTES.md](docs/DEV_NOTES.md)。有想法或遇到问题，欢迎提 Issue / PR。
+完整版本记录、本机构建踩坑、`GIT_TRACER_DATA_DIR` 等环境变量说明，都在 [docs/DEV_NOTES.md](docs/DEV_NOTES.md)；本次发版的说明见 [docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md)。有想法或遇到问题，欢迎提 Issue / PR。

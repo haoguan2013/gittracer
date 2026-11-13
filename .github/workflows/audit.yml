@@ -1,0 +1,146 @@
+# 发版前巡检 —— 用 gittracer-audit 的返回码当门禁。
+#
+# 三种用法：
+#   1. 打 v* 标签时自动跑（发版前守一道）；
+#   2. Actions 页面手动跑，目录 / 分支规则 / 忽略项都能填；
+#   3. 别的仓库直接复用：
+#        uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.7.0
+#
+# 参数留空就用仓库里的 .gittracer.toml：规则跟着代码走，CI 和本地读的是同一份。
+# 全程只读：只跑 status / rev-parse / branch --no-merged，不 fetch、不写引用、不碰工作区。
+# 退出码 0 通过 / 1 有阻断项 / 2 参数或环境错误，三种都会让这个 job 失败。
+
+name: 发版前巡检
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      roots:
+        description: 要巡检的目录，逗号分隔；. 表示当前仓库
+        default: '.'
+      depth:
+        description: 向下找仓库的层数（1~16）；留空 = 用 .gittracer.toml 里的，再没有就是 4
+        default: ''
+      branch:
+        description: 允许的分支，逗号分隔，支持 * 通配；留空 = 不检查
+        default: ''
+      base:
+        description: 未合并分支的基准；留空 = 自动探测 main / master / develop
+        default: ''
+      skip:
+        description: 跳过的规则，逗号分隔（--help 里有全量列表）
+        default: 'detached'
+      fail_on:
+        description: error / warn / never
+        default: 'error'
+  workflow_call:
+    inputs:
+      roots:
+        type: string
+        default: '.'
+      depth:
+        type: string
+        default: ''
+      branch:
+        type: string
+        default: ''
+      base:
+        type: string
+        default: ''
+      skip:
+        type: string
+        default: 'detached'
+      fail_on:
+        type: string
+        default: 'error'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: 巡检
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      # push tag 触发时 inputs 是空的，用 || 兜住默认值
+      ROOTS: ${{ inputs.roots || '.' }}
+      # 留空是故意的：让 .gittracer.toml 里的 depth 生效，而不是被这里盖掉
+      DEPTH: ${{ inputs.depth || '' }}
+      BRANCH: ${{ inputs.branch || '' }}
+      BASE: ${{ inputs.base || '' }}
+      SKIP: ${{ inputs.skip || 'detached' }}
+      FAIL_ON: ${{ inputs.fail_on || 'error' }}
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          # 必须全量：ahead / behind / branch --no-merged 都依赖远程跟踪分支，
+          # 浅克隆下这些数字全是 0，检查会静默变成「全部通过」。
+          fetch-depth: 0
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 cargo 构建
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 构建巡检程序
+        run: cargo build --release --locked --bin gittracer-audit --manifest-path src-tauri/Cargo.toml
+
+      - name: 自检：程序能启动
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD 'src-tauri/target/release/gittracer-audit.exe'
+          if (-not (Test-Path $exe)) { throw "找不到 $exe" }
+          & $exe --version
+          if ($LASTEXITCODE -ne 0) { throw "gittracer-audit --version 失败（退出码 $LASTEXITCODE）" }
+
+      - name: 跑巡检
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD 'src-tauri/target/release/gittracer-audit.exe'
+
+          $argv = @()
+          foreach ($r in ($env:ROOTS -split ',')) {
+            if ($r.Trim()) { $argv += '--root'; $argv += $r.Trim() }
+          }
+          if ($env:DEPTH.Trim())  { $argv += '--depth';  $argv += $env:DEPTH.Trim() }
+          if ($env:BRANCH.Trim()) { $argv += '--branch'; $argv += $env:BRANCH.Trim() }
+          if ($env:BASE.Trim())   { $argv += '--base';   $argv += $env:BASE.Trim() }
+          if ($env:SKIP.Trim())   { $argv += '--skip';   $argv += $env:SKIP.Trim() }
+          $argv += '--format';  $argv += 'md'
+          $argv += '--out';     $argv += 'audit.md'
+          $argv += '--fail-on'; $argv += $env:FAIL_ON
+
+          Write-Host "gittracer-audit $($argv -join ' ')"
+          & $exe @argv
+          $code = $LASTEXITCODE
+
+          # 无论成败都把报告放出来：失败的 job 更需要看是哪一条
+          if (Test-Path 'audit.md') {
+            Get-Content 'audit.md' -Encoding utf8 |
+              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            Get-Content 'audit.md' -Encoding utf8
+          }
+
+          if ($code -eq 2)     { Write-Host "::error::参数或环境错误，巡检没跑起来" }
+          elseif ($code -eq 1) { Write-Host "::error::巡检未通过，见上面需要处理的仓库" }
+          exit $code
+
+      - name: 留档报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-report
+          path: audit.md
+          if-no-files-found: warn

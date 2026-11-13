@@ -1,7 +1,7 @@
 {
   "name": "git-tracer",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.7.0",
   "type": "module",
   "description": "Git Tracer - 扫描指定目录下所有仓库的待提交内容",
   "scripts": {

@@ -1,0 +1,148 @@
+# 版本说明
+
+> 这份文件是发版时的对外说明，正文可直接粘到 GitHub Release 里。
+> 逐条技术细节在 [DEV_NOTES.md](DEV_NOTES.md) 的「更新记录」里。
+
+---
+
+## v0.7.0 — 巡检从「按钮」变成「门禁」
+
+**发布**：2026-11-13 ・ **平台**：Windows 10/11 ・ **下载**：`GitTracer-0.7.0-portable.zip`
+
+一句话：以前「这批仓库能不能发」得有人点开界面看一眼；现在它是一份跟着仓库走的规则文件，加一个能进 CI 的返回码。同一份 `.gittracer.toml`，界面、命令行、GitHub Actions 读的都是它。
+
+> 0.6.0 没有单独发过包，所以本次一并包含 0.6.0 的巡检能力。下面按「做了什么」组织，不按版本号切。
+
+### 一、发版前巡检
+
+点界面右上角「巡检」，对扫到的每个仓库跑同一套规则，逐条给结论：**通过 / 未通过**，以及是哪条规则、涉及几个文件。
+
+| 级别 | 规则 | 什么时候不过 |
+| --- | --- | --- |
+| 阻断 | `conflict` | 有文件还在冲突状态 |
+| 阻断 | `operation` | merge / rebase / cherry-pick / revert / bisect 停在中途 |
+| 阻断 | `dirty` | 有未提交改动（暂存 / 未暂存 / 未跟踪分开计数） |
+| 阻断 | `detached` | HEAD 不在任何分支上 |
+| 阻断 | `unpushed` | 有提交没推到上游 |
+| 阻断 | `branch` | 当前分支不在允许列表里（支持 `main`、`release/*` 这种写法） |
+| 阻断 | `read-error` | 读不到仓库状态，不可跳过 |
+| 提示 | `behind`／`stash`／`unmerged`／`no-upstream` | 落后远程、stash 没清、有分支没合进基准、当前分支没上游 |
+| 说明 | `no-remote` | 仓库没配远程 |
+
+结果底部两个按钮：**复制报告（Markdown）** 直接贴进发版单，**复制命令行** 拿去接 CI。
+
+### 二、命令行 `gittracer-audit.exe`
+
+和界面共用同一份规则（`audit.rs`，不依赖 Tauri），单独编成 console 程序，不弹窗口：
+
+```powershell
+gittracer-audit --root D:\work --branch "main,release/*" --base main
+```
+
+| 退出码 | 含义 |
+| --- | --- |
+| `0` | 没有达到 `--fail-on` 的问题 |
+| `1` | 有达到 `--fail-on` 的问题 |
+| `2` | 参数错误 / 目录不存在 / 找不到 git |
+
+`--format` 支持 text / md / json，另有 `--out 报告.md`、`--skip stash,unmerged`、`--fail-on error|warn|never`，`gittracer-audit --help` 看全量。和界面一样**只读**：不 fetch、不写引用、不碰工作区。
+
+### 三、规则写进仓库：`.gittracer.toml`
+
+```toml
+# .gittracer.toml
+depth  = 3                      # 只在根目录那份里有效，1~16
+branch = ["main", "release/*"]
+base   = "main"
+skip   = ["behind", "stash"]
+```
+
+| 放在哪 | 管什么 |
+| --- | --- |
+| `<根目录>/.gittracer.toml` | 这个目录下的所有仓库，还能定 `depth` |
+| `<仓库>/.gittracer.toml` | 只覆盖这一个仓库；写 `depth` 会直接报错 |
+
+优先级：**命令行 / 界面显式给的 > 仓库文件 > 根目录文件 > 内置默认**。三处刻意这么定：
+
+- **「没写」和「写空」不是一回事**：不写 `branch` 是继承上一层，`branch = []` 才是明确不检查分支。
+- **`skip` 只做并集**，越外层越宽；仓库配置没法把根目录已跳过的规则重新打开。
+- **解析失败一律硬失败**（退出码 2，带文件名和位置）。拼错键名或规则名如果被静默忽略，结果就是「以为在拦、其实没拦」。
+
+### 四、报告带审计线索
+
+门禁可以解释，但不能悄悄放过。所以报告里多三样东西：
+
+- `config_files`：这次到底依据了哪几个 `.gittracer.toml`
+- `config`：这个仓库是不是用自己的配置放宽过
+- `effective_skip`：它实际跳过了哪几条
+
+界面里体现为顶部的「依据 N 个 .gittracer.toml」和仓库行上的「本地配置」「跳过 N」小徽标；`--format md` 的已通过列表会写「跳过 xxx」，`json` 里是结构化字段。
+
+### 五、CI 工作流
+
+仓库自带 `.github/workflows/audit.yml`：打 `v*` 标签自动跑，也能在 Actions 页面填参数手动跑，别的仓库可以 `uses:` 复用。
+
+```yaml
+jobs:
+  audit:
+    uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.7.0
+    with:
+      roots: '.'
+      branch: 'main,release/*'
+```
+
+输入项留空就吃仓库里的 `.gittracer.toml`。它自己编译 `gittracer-audit`，不依赖已发布的安装包；报告写进 job summary 并作为 artifact 留档，返回码非 0 就让 job 失败。
+
+两个坑写在这里：**必须 `fetch-depth: 0`**（浅克隆里没有远程跟踪分支，`ahead` / `behind` / `--no-merged` 全算 0，检查会静默变成「全部通过」）；打 tag 触发时是游离 HEAD，所以默认带 `--skip detached`。
+
+### 六、顺带修掉的问题
+
+| 问题 | 为什么必须修 |
+| --- | --- |
+| `file_diff` 缺少路径校验 | 未跟踪文件是直接读盘的，传 `../..` 能读到仓库外的文件。提交那条路径本来就有这层校验，diff 侧漏了 |
+| `--base --all`、`--branch -x` 静默失效 | 以 `-` 开头的值被 git 当成选项，命令失败后被当作「没有基准分支」跳过，结论照样显示**通过**——假通过比假失败危险，现在直接报错退出 2 |
+| 显式给的基准分支在某个仓库里不存在 | 以前静默跳过，用户以为查了其实没查；现在出 `WARN 基准分支 X 在这个仓库里不存在，本条未生效` |
+| `path_key` 没归一末尾分隔符 | `D:\work\repo\` 和 `D:\work\repo` 被算成两个仓库，报告数字直接错 |
+| `git` 子进程继承 `GIT_DIR` / `GIT_WORK_TREE` / `GIT_INDEX_FILE` | shell 里 export 过这三个变量时，所有命令指向别的仓库；对 `reset` / `commit` 是真事故，现在一律 `env_remove` |
+| `security.csp` 是 `null` | 仓库内容渲染本来就全部走转义，但没有第二道防线；现在 `script-src 'self'`，只给 style 放行内联 |
+| Markdown 报告没过滤控制字符、中文仓库名对齐错位 | 文件名里可以有换行，会把表格整段拆坏；`pad` 改按显示宽度（CJK 记 2 格） |
+
+另外 **0.7.0 修掉一个显示问题**：勾选框所在的标签是 HUD 风格全大写，`.gittracer.toml` 被渲染成 `.GITTRACER.TOML`——Windows 不区分，Linux 上就是找不到。已单独 `text-transform: none`。
+
+### 七、升级
+
+- **免安装**：解压覆盖旧目录即可，偏好设置（根目录、深度、过滤开关、巡检参数）保留；新增的巡检字段缺失时按默认处理。
+- **已装的**：重跑 `安装.cmd`，两个 exe 都会替换。
+- **命令行调用**：旧参数不变；想完全回到 0.6 的行为，加 `--no-config`（界面里是关掉那个勾选框）。
+- 仍需 **Windows 10/11 + Git for Windows**（在 PATH 里）与 WebView2。
+
+### 八、已知限制
+
+- **不联网**：巡检不跑 `git fetch`，`behind` 用的是本地远程跟踪分支的旧值。要准就自己先 `git fetch --all`。
+- **不代改**：只判通过 / 未通过，没有 `--fix`，不自动提交或推送。
+- **配置只能放宽**：`skip` 多层只做并集，仓库配置关不掉外层已跳过的规则。
+- **仓库级不能定 `depth`**：深度是「从哪里往下找仓库」，只有根目录那份说得通。
+- **配置文件自己也要提交**：它是普通文件，没提交会被 `dirty` 数进去——第一次用会看到「有 1 处未提交改动（.gittracer.toml）」，这是提醒你把它一起提交，不是 bug。
+
+### 九、验证与产物
+
+- **32 个单元测试**通过（新增 22 个，覆盖 glob、严重级排序、路径键、配置解析、未知键 / 未知规则、`--` 与引号、depth 越界、三档优先级、空数组语义、Markdown 转义与 CJK 宽度）。
+- **fixture 实测 10 种情形**：根目录配置生效（`depth = 2` 确实排除更深一层的仓库）、仓库覆盖根目录、命令行压过仓库配置、跳过项并集、`--no-config` 回到旧行为、三类解析错误各自退出 2、仓库级 `depth` 被拒、stash / unmerged / operation / no-upstream / no-remote / branch / dirty 逐条命中。
+- **用 CDP 驱动真实应用**跑了演示项目并截图，存为 `docs/audit.png` 与 `docs/audit-config.png`。
+- `cargo check --all-targets` 零警告；release 构建通过。
+
+| 文件 | 大小 |
+| --- | --- |
+| `GitTracer.exe` | 4.1 MB |
+| `gittracer-audit.exe` | 921 KB |
+| `GitTracer-0.7.0-portable.zip` | 1.8 MB（含两个 exe + 安装 / 卸载脚本 + 使用说明） |
+
+```
+SHA256  D839A1904B5B2F9FDCEF9AEA433FB984BF9F4F075351E436305DBAA4005FA2B5
+```
+
+---
+
+## v0.6.0（未单独发版）
+
+巡检与命令行程序的初版：11 条规则、`gittracer-audit.exe`、三档输出与退出码，以及第一次出现的 GitHub Actions 工作流。规则当时只能通过命令行参数和界面输入指定——这也正是 0.7.0 要解决的问题。
