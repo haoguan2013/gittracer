@@ -1,6 +1,6 @@
 # Git Tracer
 
-![Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6) ![Tauri 2 + Rust](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20Rust-DEA584) ![零构建前端](https://img.shields.io/badge/Frontend-HTML%20%2F%20CSS%20%2F%20JS-3178C6) ![v0.10.0](https://img.shields.io/badge/Version-0.10.0-2F81F7) ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue)
+![Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6) ![Tauri 2 + Rust](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20Rust-DEA584) ![零构建前端](https://img.shields.io/badge/Frontend-HTML%20%2F%20CSS%20%2F%20JS-3178C6) ![v0.11.0](https://img.shields.io/badge/Version-0.11.0-2F81F7) ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue)
 
 **中文** · [English](README.en.md)
 
@@ -163,7 +163,7 @@ gittracer-audit --root ~/work --branch "main,release/*" --base main       # Linu
 - run: gittracer-audit --root . --branch "main,release/*" --fail-on error
 ```
 
-`--format text|md|json|sarif`、`--out 报告.md`、`--skip stash,unmerged`、`--lang zh|en` 都支持，`gittracer-audit --help` 看全量参数。`sarif` 是 GitHub Code scanning 的格式，配合 `github/codeql-action/upload-sarif` 能把巡检结果直接挂到仓库的 Security 标签页（本仓库的工作流已经在这么用）。它和界面一样只读：不 fetch、不写任何引用、不碰工作区。
+`--format text|md|json|sarif|gitlab`、`--out 报告.md`、`--skip stash,unmerged`、`--lang zh|en` 都支持，`gittracer-audit --help` 看全量参数。`sarif` 是 GitHub Code scanning 的格式，配合 `github/codeql-action/upload-sarif` 能把巡检结果直接挂到仓库的 Security 标签页（本仓库的工作流已经在这么用）。`gitlab` 是 GitLab Code Quality 的格式，`--out gl-code-quality-report.json` 交给 `artifacts:reports:codequality`，MR 里就能看（见下面「接在 GitLab 后面」）。它和界面一样只读：不 fetch、不写任何引用、不碰工作区。
 
 #### 基线：让门禁只盯新问题
 
@@ -216,13 +216,13 @@ strict = true                  # 从工作区直接打包发版时打开：未�
 ```yaml
 jobs:
   audit:
-    uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.10.0
+    uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.11.0
     with:
       roots: '.'
       branch: 'main,release/*'
 ```
 
-它自己编译 `gittracer-audit`，不依赖已经发布的安装包；报告写进 job summary 并作为 artifact 留档，返回码非 0 就让 job 失败。输入项留空就吃仓库里的 `.gittracer.toml`：`depth`、允许分支、基准、跳过项都能写在文件里，工作流只负责跑。（`@v0.10.0` 是发版后的 tag，还没打就先写 `@main`。）不想在 CI 里编 Rust 的话，Releases 里有三个平台的现成 CLI（`gittracer-audit-linux-x64.tar.gz` / `gittracer-audit-macos-arm64.tar.gz` / `gittracer-audit-windows-x64.zip`），取一份替掉「构建巡检程序」那步即可。
+它自己编译 `gittracer-audit`，不依赖已经发布的安装包；报告写进 job summary 并作为 artifact 留档，返回码非 0 就让 job 失败。输入项留空就吃仓库里的 `.gittracer.toml`：`depth`、允许分支、基准、跳过项都能写在文件里，工作流只负责跑。（`@v0.11.0` 是发版后的 tag，还没打就先写 `@main`。）不想在 CI 里编 Rust 的话，Releases 里有三个平台的现成 CLI（`gittracer-audit-linux-x64.tar.gz` / `gittracer-audit-macos-arm64.tar.gz` / `gittracer-audit-windows-x64.zip`），取一份替掉「构建巡检程序」那步即可。
 
 本仓库自己跑这个工作流时，还会顺手把 SARIF 版报告传到 Code scanning 标签页——巡检结果在仓库页就能看，不用点进日志找。别的仓库复用时不带这步（那边要 `security-events` 权限，由调用方自己决定）。
 
@@ -230,6 +230,40 @@ jobs:
 
 - **必须全量检出**（`fetch-depth: 0`）。浅克隆里没有远程跟踪分支，`ahead` / `behind` / `branch --no-merged` 全是 0，检查会静默变成「全部通过」——这比跑不起来更危险。
 - 打 tag 触发时检出的是游离 HEAD，所以工作流默认带 `--skip detached`；如果你在分支上跑，把这项去掉才能真正拦住 detached。
+
+### 接在 GitLab 后面
+
+GitLab 的入口是 `.gitlab-ci.yml`，仓库里同样带了一份现成的：[`.gitlab-ci.yml`](.gitlab-ci.yml)。两边差别只在「报告送哪儿」：
+
+| | GitHub Actions | GitLab CI |
+| --- | --- | --- |
+| 触发 | `v*` 标签 / 手动 | MR、默认分支、`v*` 标签 |
+| 报告格式 | `--format sarif` | `--format gitlab`（Code Quality / CodeClimate） |
+| 报告去处 | Code scanning 标签页 | `artifacts:reports:codequality`，并进 MR 与流水线的质量报告 |
+| 谁能拦人 | 退出码 | 退出码（同一套） |
+
+`--format gitlab` 输出的是 CodeClimate 那份 JSON，GitLab 只读其中五个字段：`description`、`check_name`、`fingerprint`、`severity`、`location`。
+
+```yaml
+gittracer-audit:
+  image: rust:1-bookworm          # -slim 里没有 git，别换
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+    - if: $CI_COMMIT_TAG =~ /^v/
+  script:
+    - cargo build --release --locked -p git-tracer-core --bin gittracer-audit --manifest-path src-tauri/Cargo.toml
+    - src-tauri/target/release/gittracer-audit --root . --skip detached --format gitlab --out gl-code-quality-report.json
+  artifacts:
+    when: always
+    reports:
+      codequality: gl-code-quality-report.json
+```
+
+三个细节值得先知道：
+
+- **`fingerprint` 就是基线的键**（`仓库路径|规则`）。同一条问题在文本报告、`--baseline`、MR 质量报告里是同一个身份，重跑不会被当成新问题重新报一遍。
+- **路径相对项目根目录**，GitLab 明确不要 `./` 前缀。巡检结论是仓库级的、没有「第几行」，所以挂在仓库目录上、行号固定 1：MR 的 diff 里不会有行内小图标，报告列表里看得见是哪一条。要精确到文件行号，得有结构化的定位信息，那是另一件事。
+- **报告不负责拦人**。制品里写着 critical，流水线也不会自己变红；红不红只看 `gittracer-audit` 的退出码。所以哪怕套餐里看不到 Code Quality 界面，门禁照样有效——展示那一层取决于 GitLab 版本与套餐（官方功能表按 Free / Premium / Ultimate 分层）。
 
 ## 和别的多仓库工具怎么分工
 
@@ -268,7 +302,7 @@ jobs:
 
 ## 下载与安装
 
-到本仓库的 **Releases** 页面下载 `GitTracer-0.10.0-portable.zip`（仓库里不放二进制包，也可以按下面的命令自己生成）：
+到本仓库的 **Releases** 页面下载 `GitTracer-0.11.0-portable.zip`（仓库里不放二进制包，也可以按下面的命令自己生成）：
 
 | 方式 | 做法 | 说明 |
 | --- | --- | --- |
@@ -294,7 +328,7 @@ pnpm tauri build    # release exe + NSIS 安装包
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\make-package.ps1
 ```
 
-产物在 `src-tauri/target/release/git-tracer.exe`、同目录下的 `gittracer-audit.exe`，以及 `GitTracer-0.10.0-portable.zip`。`tools/` 里还有生成测试仓库的 `make-demo-data.ps1`、生成图标的 `make-icons.py`（纯标准库）、用 CDP 驱动界面截图的 `cdp.mjs`，以及录 README 动图的两步：`make-gif.mjs` 抓帧、`gif.py` 合成（这一步要 `pip install pillow`）。
+产物在 `src-tauri/target/release/git-tracer.exe`、同目录下的 `gittracer-audit.exe`，以及 `GitTracer-0.11.0-portable.zip`。`tools/` 里还有生成测试仓库的 `make-demo-data.ps1`、生成图标的 `make-icons.py`（纯标准库）、用 CDP 驱动界面截图的 `cdp.mjs`，以及录 README 动图的两步：`make-gif.mjs` 抓帧、`gif.py` 合成（这一步要 `pip install pillow`）。
 
 ### 项目怎么搭的
 
@@ -311,7 +345,8 @@ src-tauri/src/
   dialog.rs           文件夹选择、资源管理器定位
 .gittracer.toml       本仓库自己的巡检规则，也是配置文件的现成示例
 tools/                打包、安装、造测试数据、图标、CDP 调试
-.github/workflows/    发版前巡检的 CI 工作流
+.github/workflows/    发版前巡检的 CI 工作流（GitHub Actions）
+.gitlab-ci.yml        同一件事的 GitLab CI 版
 docs/                 截图 + 开发排障笔记 + 版本说明
 ```
 

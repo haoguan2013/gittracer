@@ -1137,6 +1137,140 @@ pub fn render_sarif(report: &Report) -> String {
     s
 }
 
+/* ---------------------------------------------------------------- GitLab */
+
+/// Code Quality 的 `severity` 只认 info / minor / major / critical / blocker。
+/// 巡检的三档正好对得上：阻断项是「这一条不过就别发版」，给 critical；
+/// 工作区待办是「能发，但手上有活」，给 minor；剩下的是记录，给 info。
+fn gitlab_severity(sev: Severity) -> &'static str {
+    match sev {
+        Severity::Error => "critical",
+        Severity::Warn => "minor",
+        Severity::Info => "info",
+    }
+}
+
+/// GitLab 用 `fingerprint` 判断「这是上次那条，还是新冒出来的」：必须跨运行稳定，
+/// 不同问题之间还得不撞。所以键用 `路径|规则`，和基线去重是同一个键——
+/// 同一条问题在文本报告、基线、Code Quality 里是同一个身份。
+///
+/// 用 FNV-1a 而不是 sha256，是不想为一个指纹给 core 再添一个哈希库（它现在只有
+/// serde / toml）。这里要的是身份，不是抗碰撞的密码学强度。
+fn fingerprint(key: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in key.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
+/// `location.path` 必须是**相对项目根目录**的路径，还不能带 `./` 前缀：
+/// GitLab 拿它去对 MR 里改动的文件，绝对路径永远对不上。
+///
+/// 巡检结论是仓库级的，没有「第几行」这种东西，所以挂在仓库目录上、行号固定 1。
+/// 真正的收益在报告列表本身，而不是 diff 上的小图标。
+fn gitlab_path(repo_path: &str) -> String {
+    let abs = absolute(repo_path);
+    let Some(base) = std::env::current_dir().ok().map(|d| absolute(&d.to_string_lossy())) else {
+        return abs;
+    };
+    if base.is_empty() {
+        return abs;
+    }
+    let lower_base = base.to_lowercase();
+    let lower_abs = abs.to_lowercase();
+    if lower_abs == lower_base {
+        // 巡检的就是当前项目本身，返回 "" 或 "." 都不像个路径，
+        // 用目录名兜住，列表里至少能看出是哪个仓库
+        return abs
+            .rsplit('/')
+            .find(|s| !s.is_empty())
+            .unwrap_or(".")
+            .to_string();
+    }
+    // base 是盘符根（`/`、`C:/`）时不要再补一个分隔符，否则前缀变成 `//`
+    let cut = if lower_base.ends_with('/') {
+        base.len()
+    } else {
+        base.len() + 1
+    };
+    let prefix = if lower_base.ends_with('/') {
+        lower_base.clone()
+    } else {
+        format!("{lower_base}/")
+    };
+    if lower_abs.starts_with(&prefix) {
+        if let Some(rest) = abs.get(cut..) {
+            return rest.to_string();
+        }
+    }
+    abs
+}
+
+/// 相对路径先按当前工作目录补全，再把 `.` / `..` 那种多余段收掉：
+/// `--root .` 传进来的就是 "."，不收一下既比不出前缀，也写不进报告。
+fn absolute(p: &str) -> String {
+    let path = Path::new(p);
+    let full = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        match std::env::current_dir() {
+            Ok(cwd) => cwd.join(path),
+            Err(_) => path.to_path_buf(),
+        }
+    };
+    // components() 会顺手丢掉中间的 `.` 段和结尾的 `/`，`..` 保留原样
+    let clean: PathBuf = full.components().collect();
+    let s = clean.to_string_lossy().replace('\\', "/");
+    s.trim_end_matches('/').to_string()
+}
+
+/// 渲染成 GitLab Code Quality 报告（CodeClimate 的裁剪版）。
+///
+/// 用法：`--format gitlab --out gl-code-quality-report.json`，然后在
+/// `.gitlab-ci.yml` 里声明 `artifacts:reports:codequality`。GitLab 会把它并进
+/// MR / 流水线的质量报告；门外那道门禁仍然是退出码，报告不负责拦人。
+///
+/// 和 SARIF 的一个差别：Code Quality 没有 suppressions 这回事，已知项删不掉，
+/// 只能在描述后面标一句「已知」——否则接了基线的团队会看到一堆「老问题」。
+pub fn render_gitlab(report: &Report) -> String {
+    let mut items: Vec<serde_json::Value> = Vec::new();
+    for repo in &report.repos {
+        let path = gitlab_path(&repo.path);
+        for f in &repo.findings {
+            // 描述里带仓库和分支：报告列表只显示这一行，不带就分不清是谁家的
+            let mut description = crate::tr!(
+                "{msg} · 仓库 {repo}@{branch}",
+                "{msg} · repo {repo}@{branch}",
+                msg = f.message,
+                repo = repo.name,
+                branch = repo.branch.as_deref().unwrap_or("detached")
+            );
+            if let Some(d) = &f.detail {
+                description.push_str(&format!(" · {d}"));
+            }
+            if f.baseline == Some(BaselineState::Known) {
+                description.push_str(crate::i18n::t("（已知，不计入结论）", " (known, not counted)"));
+            }
+            items.push(serde_json::json!({
+                "description": description,
+                "check_name": format!("gittracer/{}", f.code),
+                "fingerprint": fingerprint(&baseline_key(&repo.path, &f.code)),
+                "severity": gitlab_severity(f.severity),
+                "location": {
+                    "path": path,
+                    "lines": { "begin": 1 },
+                },
+            }));
+        }
+    }
+    // GitLab 的解析器不收 BOM，std::fs::write 写的是纯 UTF-8，这里不会带
+    let mut s = serde_json::to_string_pretty(&items).unwrap_or_else(|_| "[]".to_string());
+    s.push('\n');
+    s
+}
+
 pub fn render_text(report: &Report) -> String {
     let mut out = String::new();
     let sep = crate::i18n::t("；", "; ");
@@ -2121,6 +2255,139 @@ mod tests {
         let r = &v["runs"][0]["results"][0];
         assert!(r.get("suppressions").is_some(), "已知项要带 suppressions");
         assert_eq!(r["suppressions"][0]["kind"], "external");
+    }
+
+    // ---------------------------------------------------------------- GitLab
+
+    fn report_of(repos: Vec<RepoAudit>) -> Report {
+        Report {
+            generated_at: String::new(),
+            roots: vec![],
+            depth: 1,
+            base: None,
+            branch_allow: vec![],
+            skipped: vec![],
+            strict: false,
+            config_files: vec![],
+            root_errors: vec![],
+            baseline_file: None,
+            repos,
+            totals: Totals::default(),
+            verdict: Verdict::Passed,
+            elapsed_ms: 0,
+        }
+    }
+
+    fn fingerprints(json: &str) -> Vec<String> {
+        let v: serde_json::Value = serde_json::from_str(json).expect("合法 JSON");
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["fingerprint"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn gitlab_report_carries_the_required_fields() {
+        let mut repo = dirty_only(false);
+        repo.findings.push(Finding::new(
+            "branch",
+            Severity::Error,
+            Scope::Release,
+            "分支不在白名单",
+        ));
+        let out = render_gitlab(&report_of(vec![repo]));
+        let v: serde_json::Value = serde_json::from_str(&out).expect("Code Quality 报告必须是合法 JSON");
+        let arr = v.as_array().expect("顶层必须是数组");
+        assert_eq!(arr.len(), 2);
+
+        for it in arr {
+            for key in ["description", "check_name", "fingerprint", "severity", "location"] {
+                assert!(!it[key].is_null(), "缺字段 {key}");
+            }
+            let path = it["location"]["path"].as_str().unwrap();
+            assert!(!path.starts_with("./"), "GitLab 明确不要 ./ 前缀");
+            assert!(!path.contains('\\'), "路径必须用 / 分隔");
+            assert_eq!(it["location"]["lines"]["begin"], 1);
+            let sev = it["severity"].as_str().unwrap();
+            assert!(
+                ["info", "minor", "major", "critical", "blocker"].contains(&sev),
+                "级别 {sev} 不在 GitLab 认的范围内"
+            );
+            assert!(it["check_name"].as_str().unwrap().starts_with("gittracer/"));
+        }
+        assert_eq!(arr[0]["severity"], "minor", "非严格模式的 dirty 是提示项");
+        assert_eq!(arr[1]["severity"], "critical", "阻断项要顶格");
+        assert_eq!(arr[1]["check_name"], "gittracer/branch");
+        assert!(
+            arr[0]["description"].as_str().unwrap().contains("api"),
+            "报告列表只显示 description，得带上仓库名"
+        );
+    }
+
+    #[test]
+    fn gitlab_fingerprints_are_stable_across_runs() {
+        let one = report_of(vec![dirty_only(false)]);
+        // 逐字节一致：指纹变了 GitLab 就会把老问题当新问题重报一遍
+        assert_eq!(render_gitlab(&one), render_gitlab(&one));
+
+        let mut other = dirty_only(false);
+        other.path = "D:/w/web".into();
+        other.name = "web".into();
+        let a = fingerprints(&render_gitlab(&one));
+        let b = fingerprints(&render_gitlab(&report_of(vec![other])));
+        assert_eq!(a.len(), 1);
+        assert_ne!(a[0], b[0], "不同仓库的同一规则必须是不同指纹");
+
+        // 同一个仓库里两条不同规则也不能撞
+        let mut mixed = dirty_only(false);
+        mixed.findings.push(Finding::new(
+            "stash",
+            Severity::Warn,
+            Scope::Workspace,
+            "有 stash",
+        ));
+        let fps = fingerprints(&render_gitlab(&report_of(vec![mixed])));
+        assert_ne!(fps[0], fps[1]);
+    }
+
+    #[test]
+    fn gitlab_path_is_relative_to_the_project() {
+        let cwd = std::env::current_dir().expect("总得有个工作目录");
+        let inside = cwd.join("nested").join("repo");
+        assert_eq!(gitlab_path(&inside.to_string_lossy()), "nested/repo");
+
+        // CI 里 `--root .` 传进来的就是这个：要退回目录名，不能是 "." 或空串
+        let own = gitlab_path(".");
+        assert!(!own.is_empty() && own != ".", "得到 {own}");
+        assert_eq!(own, gitlab_path(&cwd.to_string_lossy()));
+
+        // 反斜杠写法的同一个目录也得认
+        let win_style = inside.to_string_lossy().replace('/', "\\");
+        assert_eq!(gitlab_path(&win_style), "nested/repo");
+
+        // 不在工作目录下就原样返回（分隔符统一成 /），至少看得出是哪个目录
+        let outside = cwd.parent().expect("工作目录总得有父目录").join("outside-repo");
+        let out = gitlab_path(&outside.to_string_lossy());
+        assert!(!out.starts_with("./"), "GitLab 不要 ./ 前缀");
+        assert!(!out.contains('\\'), "路径必须用 / 分隔");
+        assert!(out.ends_with("outside-repo"), "得到 {out}");
+    }
+
+    #[test]
+    fn gitlab_keeps_known_findings_but_marks_them() {
+        // Code Quality 没有 suppressions，已知项只能靠描述区分，不能悄悄删——
+        // 审计要看全部，门禁才只盯新增
+        let mut repo = dirty_only(false);
+        repo.findings[0].baseline = Some(BaselineState::Known);
+        let v: serde_json::Value =
+            serde_json::from_str(&render_gitlab(&report_of(vec![repo]))).expect("合法 JSON");
+        let desc = v[0]["description"].as_str().unwrap();
+        assert!(
+            desc.contains("已知") || desc.contains("known"),
+            "已知项要在描述里说明，实际是：{desc}"
+        );
+        assert!(v[0]["severity"].is_string(), "已知项照样要报，只是不进结论");
     }
 
     // ---------------------------------------------------------------- 基准分支

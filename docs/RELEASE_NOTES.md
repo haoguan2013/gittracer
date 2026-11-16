@@ -7,6 +7,42 @@
 
 ---
 
+## v0.11.0 — GitLab 也能接了
+
+**发布**：2026-11-16 ・ **平台**：Windows 10/11（GUI）・ Windows / Linux / macOS（CLI） ・ **下载**：`GitTracer-0.11.0-portable.zip` + 三平台 CLI 压缩包
+
+一句话：巡检多了一种报告格式和一份流水线配置，GitLab 的 MR 里能看到「这批仓库能不能发」。
+
+### 一、`--format gitlab`
+
+输出的是 GitLab Code Quality 认的那份 JSON（CodeClimate 的裁剪版，GitLab 只读五个字段），由 `artifacts:reports:codequality` 收走后并进 MR 和流水线的质量报告：
+
+```bash
+gittracer-audit --root . --skip detached \
+  --format gitlab --out gl-code-quality-report.json --fail-on never
+```
+
+三个设计取舍：
+
+- **`fingerprint` 用「仓库路径|规则」算**，和 `--baseline` 去重是同一个键。同一条问题在文本报告、基线、MR 质量报告里是同一个身份，重跑不会被当成新问题重报。没有引入 sha256——为一个指纹给 core 添一个哈希库不值当，FNV-1a 在这里够用。
+- **级别映射**：阻断项 → `critical`，提示项 → `minor`，说明项 → `info`。
+- **路径相对项目根目录**，GitLab 明确不要 `./` 前缀。巡检结论是仓库级的、没有行号，所以挂在仓库目录上、行号固定 1。
+
+### 二、`.gitlab-ci.yml`
+
+仓库里多了一份现成的流水线：MR、默认分支、`v*` 标签三种触发。和 GitHub 那份踩的是同一个坑——**必须全量检出**，再补一条 `git fetch` 把 `refs/heads/*` 拉成远程跟踪引用，否则 `ahead` / `behind` / `branch --no-merged` 全是 0，检查静默变成「全部通过」。
+
+跑两遍是故意的：第一遍出 markdown 进 job 日志（失败的流水线更需要看是哪一条），第二遍出 Code Quality 报告。**门禁还是退出码**——制品里写着 `critical` 也不会让流水线变红，红不红只看 `gittracer-audit` 的返回值。
+
+### 三、顺带修掉的两处
+
+- **`--root .` 时报告里写着「仓库 .」**：`Path::file_name()` 对 `.` 和 `..` 返回 `None`，兜底用了 `display()`，于是仓库名、SARIF 的 message、GitLab 的 description 全成了「.」。现在退回绝对路径的最后一段，报告里是 `gittracer@main`。
+- **相对路径没被规范化**：路径里带 `/.` 时既比不出前缀，也写不进 Code Quality。现在先按工作目录补全、收掉 `.` 段，再算相对路径。
+
+> 升级提示：`--format json` / `sarif` 的结构没变，新增的只是 `gitlab` 这一种格式。行为上唯一的变化是仓库名不再退化成「.」——如果你按名字匹配过报告里的「.」，检查一下。
+
+---
+
 ## v0.10.0 — 英文界面
 
 **发布**：2026-11-16 ・ **平台**：Windows 10/11（GUI）・ Windows / Linux / macOS（CLI） ・ **下载**：`GitTracer-0.10.0-portable.zip` + 三平台 CLI 压缩包

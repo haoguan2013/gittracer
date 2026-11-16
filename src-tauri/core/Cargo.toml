@@ -1,6 +1,6 @@
 [package]
 name = "git-tracer-core"
-version = "0.10.0"
+version = "0.11.0"
 edition = "2021"
 description = "Git Tracer 核心逻辑：扫描 / 巡检 / 配置，外加 gittracer-audit 命令行"
 

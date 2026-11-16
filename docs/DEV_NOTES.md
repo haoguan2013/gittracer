@@ -278,6 +278,33 @@ docs/
 
 ## 更新记录
 
+**0.11.0**
+
+- **`--format gitlab`（Code Quality）**：`audit.rs` 新增 `render_gitlab`，输出 CodeClimate
+  裁剪版数组。`fingerprint` 直接复用基线的键 `baseline_key(路径, 规则)` 的 FNV-1a 64 位
+  摘要——**身份统一**比哈希强度重要，也不给 core 添 `sha2` 依赖（现在只有 serde / toml）。
+  级别映射 `Error→critical` / `Warn→minor` / `Info→info`。Code Quality **没有 suppressions
+  这回事**，所以已知项（`--baseline`）不能像 SARIF 那样标抑制，只能在描述后面写「（已知，
+  不计入结论）」，否则接了基线的团队会看到一堆老问题被反复重报。
+- **`gitlab_path()` + `absolute()`**：GitLab 要求 `location.path` 相对项目根目录、且不要
+  `./` 前缀。踩到的坑是 `--root .` 时 `repo.path` 就是字面量 `.`，既比不出前缀也写不进报告。
+  现在先按 `current_dir()` 补全、用 `Path::components()` 收掉 `.` 段（`..` 保留），再按大小写
+  不敏感比前缀；是项目本身时退回目录名。`Path::components()` 顺带解决结尾 `/` 和重复分隔符。
+- **`scan.rs::dir_name()`**：`Path::file_name()` 对 `.` / `..` / 盘符根都返回 `None`，原来的
+  兜底是 `display()`，于是仓库名变成「.」——文本报告、SARIF 的 message、GitLab 的
+  description 三处都写着「仓库 .」。现在退回 `canonicalize()` 的最后一段。**这是一个跨格式的
+  修复**，不是 GitLab 专属。
+- **`.gitlab-ci.yml`**：`image: rust:1-bookworm`（`-slim` 里没有 git，`before_script` 的
+  `git fetch` 会直接挂）；`GIT_DEPTH: '0'` + 补 `+refs/heads/*:refs/remotes/origin/*` 是与
+  GitHub 版同一条教训。脚本里 `set -eu` 与 `[ -n "$X" ] && ARGS="$ARGS ..."` 的组合是安全的：
+  `-e` 不作用于 AND 列表中非末尾的命令。`cat audit.md` 前面加了 `[ -f ]` 判断——退出码 2
+  （参数错）时报告根本没生成，裸 `cat` 会把真正的错因盖成 "No such file"。
+- **MR 基准**：`BASE=${AUDIT_BASE:-${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}}`，MR 流水线
+  自动拿目标分支当 `--base`，比写死 `main` 准。
+- **测试**：新增 4 项（必填字段与级别、指纹稳定性与区分度、路径相对化、已知项标记）。
+  `gitlab_path` 的断言避开了平台差异：不用写死的 `/elsewhere`（Windows 上 `is_absolute`
+  为 false 会被 join 到 cwd 下），改用 `cwd.parent()` 造「工作目录之外」的路径。
+
 **0.10.0**
 
 - **语言基础设施 `core/src/i18n.rs`**：`Lang { Zh, En }` + 进程级开关

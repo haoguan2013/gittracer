@@ -1,6 +1,6 @@
 # Git Tracer
 
-![Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6) ![Tauri 2 + Rust](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20Rust-DEA584) ![No build step](https://img.shields.io/badge/Frontend-HTML%20%2F%20CSS%20%2F%20JS-3178C6) ![v0.10.0](https://img.shields.io/badge/Version-0.10.0-2F81F7) ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue)
+![Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6) ![Tauri 2 + Rust](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20Rust-DEA584) ![No build step](https://img.shields.io/badge/Frontend-HTML%20%2F%20CSS%20%2F%20JS-3178C6) ![v0.11.0](https://img.shields.io/badge/Version-0.11.0-2F81F7) ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue)
 
 [中文](README.md) · **English**
 
@@ -150,7 +150,7 @@ Exit codes: `0` no blockers (warnings allowed), `1` blockers found, `2` bad argu
 - run: gittracer-audit --root . --branch "main,release/*" --fail-on error
 ```
 
-`--format text|md|json|sarif`, `--out report.md`, `--skip stash,unmerged`, `--strict`, `--no-config`, `--lang zh|en` are supported; `gittracer-audit --help` lists everything. `sarif` is the GitHub Code scanning format — feed it to `github/codeql-action/upload-sarif` and audit results show up on your repo's Security tab (this repository's workflow already does). Like the GUI it is read-only: no fetch, no refs written, no working-tree changes.
+`--format text|md|json|sarif|gitlab`, `--out report.md`, `--skip stash,unmerged`, `--strict`, `--no-config`, `--lang zh|en` are supported; `gittracer-audit --help` lists everything. `sarif` is the GitHub Code scanning format — feed it to `github/codeql-action/upload-sarif` and audit results show up on your repo's Security tab (this repository's workflow already does). `gitlab` is the Code Quality format: write it to `gl-code-quality-report.json` and declare it under `artifacts:reports:codequality` to see it in a merge request (see "On GitLab" below). Like the GUI it is read-only: no fetch, no refs written, no working-tree changes.
 
 ### Baselines: gate on what's new
 
@@ -203,13 +203,13 @@ The repo ships a ready-made workflow, [`.github/workflows/audit.yml`](.github/wo
 ```yaml
 jobs:
   audit:
-    uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.10.0
+    uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.11.0
     with:
       roots: '.'
       branch: 'main,release/*'
 ```
 
-It builds `gittracer-audit` itself, so it doesn't depend on a published package; the report goes to the job summary and an artifact, and a non-zero exit fails the job. Leave inputs empty and it reads `.gittracer.toml` from the repo: `depth`, allowed branches, base, skips, strict — the workflow only runs it. (`@v0.10.0` assumes the tag exists; use `@main` before that.) If you'd rather not compile Rust in CI, the Releases page has prebuilt CLIs for all three platforms (`gittracer-audit-linux-x64.tar.gz`, `gittracer-audit-macos-arm64.tar.gz`, `gittracer-audit-windows-x64.zip`) — swap the build step for a download.
+It builds `gittracer-audit` itself, so it doesn't depend on a published package; the report goes to the job summary and an artifact, and a non-zero exit fails the job. Leave inputs empty and it reads `.gittracer.toml` from the repo: `depth`, allowed branches, base, skips, strict — the workflow only runs it. (`@v0.11.0` assumes the tag exists; use `@main` before that.) If you'd rather not compile Rust in CI, the Releases page has prebuilt CLIs for all three platforms (`gittracer-audit-linux-x64.tar.gz`, `gittracer-audit-macos-arm64.tar.gz`, `gittracer-audit-windows-x64.zip`) — swap the build step for a download.
 
 When this repository runs the workflow on itself, it also uploads a SARIF copy to the Code scanning tab — audit results right on the repo page, no digging through logs. Reusable runs elsewhere skip that step (it needs `security-events` permission, which belongs to the caller).
 
@@ -217,6 +217,40 @@ Two traps worth knowing:
 
 - **Check out the full history** (`fetch-depth: 0`). A shallow clone has no remote-tracking branches, so `ahead` / `behind` / `branch --no-merged` all read as 0 and the checks silently degrade to "everything passes" — more dangerous than failing to run.
 - A tag build checks out a detached HEAD, so the workflow passes `--skip detached` by default. Drop that if you run on branches and want detached HEAD to be caught.
+
+### On GitLab
+
+The GitLab entry point is `.gitlab-ci.yml`, and the repo ships one of those too: [`.gitlab-ci.yml`](.gitlab-ci.yml). Only the destination differs:
+
+| | GitHub Actions | GitLab CI |
+| --- | --- | --- |
+| Trigger | `v*` tag / manual | merge requests, default branch, `v*` tags |
+| Report format | `--format sarif` | `--format gitlab` (Code Quality / CodeClimate) |
+| Destination | Code scanning tab | `artifacts:reports:codequality`, surfaced in the MR and pipeline quality report |
+| What blocks | exit code | exit code (the same one) |
+
+`--format gitlab` writes the CodeClimate JSON; GitLab reads five fields from it: `description`, `check_name`, `fingerprint`, `severity`, `location`.
+
+```yaml
+gittracer-audit:
+  image: rust:1-bookworm          # -slim has no git; don't switch
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+    - if: $CI_COMMIT_TAG =~ /^v/
+  script:
+    - cargo build --release --locked -p git-tracer-core --bin gittracer-audit --manifest-path src-tauri/Cargo.toml
+    - src-tauri/target/release/gittracer-audit --root . --skip detached --format gitlab --out gl-code-quality-report.json
+  artifacts:
+    when: always
+    reports:
+      codequality: gl-code-quality-report.json
+```
+
+Three things worth knowing up front:
+
+- **`fingerprint` is the baseline key** (`repo path|rule`). One finding keeps one identity across the text report, `--baseline`, and the MR quality report, so a re-run doesn't report old issues as new.
+- **Paths are relative to the project root** — GitLab rejects a `./` prefix outright. Findings are repo-level and have no line numbers, so they anchor on the repository directory at line 1: no inline gutter marker in an MR diff, but the report list names the rule. Pinning them to a file requires structured locations, which is a different feature.
+- **The report blocks nothing.** A `critical` severity in the artifact won't turn the pipeline red; only the exit code does. So the gate still works where the Code Quality UI isn't available — the display layer depends on your GitLab version and tier.
 
 ## How it differs from other multi-repo tools
 
@@ -255,7 +289,7 @@ Hard rules underneath: empty commit messages are rejected; **commits and diff pr
 
 ## Download and install
 
-Grab `GitTracer-0.10.0-portable.zip` from **Releases** (no binaries are committed to the repo; you can also build it yourself):
+Grab `GitTracer-0.11.0-portable.zip` from **Releases** (no binaries are committed to the repo; you can also build it yourself):
 
 | Option | How | Notes |
 | --- | --- | --- |
@@ -281,7 +315,7 @@ To produce the portable zip:
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\make-package.ps1
 ```
 
-Artifacts: `src-tauri/target/release/git-tracer.exe`, `gittracer-audit.exe` beside it, and `GitTracer-0.10.0-portable.zip`. `tools/` also holds `make-demo-data.ps1` (fake repositories for testing and screenshots), `make-icons.py` (stdlib only), `cdp.mjs` (drives the UI over CDP for screenshots), and the two-step GIF recorder: `make-gif.mjs` captures frames, `gif.py` assembles them (`pip install pillow` for that step).
+Artifacts: `src-tauri/target/release/git-tracer.exe`, `gittracer-audit.exe` beside it, and `GitTracer-0.11.0-portable.zip`. `tools/` also holds `make-demo-data.ps1` (fake repositories for testing and screenshots), `make-icons.py` (stdlib only), `cdp.mjs` (drives the UI over CDP for screenshots), and the two-step GIF recorder: `make-gif.mjs` captures frames, `gif.py` assembles them (`pip install pillow` for that step).
 
 ### Layout
 
@@ -298,7 +332,8 @@ src-tauri/src/
   dialog.rs            folder picker, reveal in Explorer
 .gittracer.toml        this repo's own rules — a working example of the format
 tools/                 packaging, install, demo data, icons, CDP debugging
-.github/workflows/     the pre-release audit workflow
+.github/workflows/     the pre-release audit workflow (GitHub Actions)
+.gitlab-ci.yml         the same thing for GitLab CI
 docs/                  screenshots + dev notes + release notes
 ```
 

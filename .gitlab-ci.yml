@@ -1,0 +1,98 @@
+# 发版前巡检 —— GitLab 版（GitHub Actions 那份见 .github/workflows/audit.yml）
+#
+# 和 GitHub 版的差别只在"报告送哪儿"：
+#   GitHub → SARIF → Code scanning 标签页
+#   GitLab → Code Quality（CodeClimate JSON）→ MR / 流水线的质量报告
+# 门禁本身是同一个东西：gittracer-audit 的退出码。报告不负责拦人，退出码负责。
+#
+# 三种触发：MR、默认分支、v* 标签。参数留空就用仓库里的 .gittracer.toml，
+# 规则跟着代码走，CI 和本地读的是同一份。
+#
+# 别的仓库要用：抄这个文件，按需改 AUDIT_ROOT / AUDIT_BRANCH。
+
+stages:
+  - audit
+
+variables:
+  # 必须全量：ahead / behind / branch --no-merged 都靠远程跟踪引用，
+  # 浅克隆下这些数字全是 0，检查会静默变成"全部通过"。
+  GIT_DEPTH: '0'
+  # 缓存 cargo 的 registry，省掉每次重新拉依赖
+  CARGO_HOME: '$CI_PROJECT_DIR/.cargo'
+  # 巡检哪个目录。单仓库就是 "."，workspace 里想连带子仓库就改成 ".."
+  AUDIT_ROOT: '.'
+  # 留空 = 用 .gittracer.toml 里的值，再没有就用默认
+  AUDIT_DEPTH: ''
+  AUDIT_BRANCH: ''
+  AUDIT_BASE: ''
+  # 合并检出 / 标签检出时 HEAD 是分离的，这条必然命中，默认跳过
+  AUDIT_SKIP: 'detached'
+  FAIL_ON: 'error'
+
+gittracer-audit:
+  stage: audit
+  # rust:1 基于 buildpack-deps，自带 git；不要换成 -slim，那个里面没有
+  image: rust:1-bookworm
+  interruptible: true
+  timeout: 30 minutes
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+    - if: $CI_COMMIT_TAG =~ /^v/
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  cache:
+    key: cargo-registry
+    paths:
+      - .cargo/registry/
+      - .cargo/git/
+  before_script:
+    # 标签 / 合并检出都是分离 HEAD，默认 refspec 只带那一个 ref，仓库里没有
+    # origin/main —— 基准分支检查（--base）会跟着一起失效。对象本来就在本地，
+    # 这一步只是把 refs 补齐。
+    - git fetch --no-tags --prune origin '+refs/heads/*:refs/remotes/origin/*'
+  script:
+    - |
+      set -eu
+      EXE=src-tauri/target/release/gittracer-audit
+
+      cargo build --release --locked -p git-tracer-core --bin gittracer-audit \
+        --manifest-path src-tauri/Cargo.toml
+
+      # 自检：程序能起来才谈得上巡检
+      "$EXE" --version
+
+      # MR 流水线里拿目标分支当基准，比写死 main 更准
+      BASE="${AUDIT_BASE:-${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}}"
+
+      ARGS=""
+      [ -n "$AUDIT_DEPTH" ]  && ARGS="$ARGS --depth $AUDIT_DEPTH"
+      [ -n "$AUDIT_BRANCH" ] && ARGS="$ARGS --branch $AUDIT_BRANCH"
+      [ -n "$BASE" ]         && ARGS="$ARGS --base $BASE"
+      [ -n "$AUDIT_SKIP" ]   && ARGS="$ARGS --skip $AUDIT_SKIP"
+
+      # 先跑人看的这份：无论成败都要留在日志里，失败的流水线更需要看是哪一条
+      code=0
+      "$EXE" --root "$AUDIT_ROOT" $ARGS --format md --out audit.md \
+        --fail-on "$FAIL_ON" || code=$?
+      # 参数错（退出码 2）时报告根本没生成，别让 cat 把真正的错因盖成"No such file"
+      if [ -f audit.md ]; then cat audit.md; fi
+
+      # 再单独出一份 Code Quality（半秒的事）。--fail-on never 是故意的：
+      # 这一步不该改变上一次的结论，退出码已经由上面那次决定了。
+      "$EXE" --root "$AUDIT_ROOT" $ARGS --format gitlab \
+        --out gl-code-quality-report.json --fail-on never || true
+
+      if [ "$code" -eq 2 ]; then
+        echo "参数或环境错误，巡检没跑起来"
+      elif [ "$code" -eq 1 ]; then
+        echo "巡检未通过，见审计报告里的阻断项"
+      fi
+      exit "$code"
+  artifacts:
+    when: always
+    # 失败时更需要这两份：报告是给人看"为什么不通过"的
+    paths:
+      - audit.md
+      - gl-code-quality-report.json
+    reports:
+      codequality: gl-code-quality-report.json
+    expire_in: 30 days

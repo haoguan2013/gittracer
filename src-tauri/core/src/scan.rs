@@ -73,6 +73,20 @@ fn is_repo_marker(dir: &Path) -> Option<&'static str> {
     }
 }
 
+/// 目录名。`.` / `..` / 盘符根都没有 `file_name`，直接拿 `display()` 会得到 "."，
+/// 报告里写「仓库 .」等于没写；退回绝对路径的最后一段。
+fn dir_name(p: &Path) -> String {
+    if let Some(n) = p.file_name() {
+        return n.to_string_lossy().into_owned();
+    }
+    if let Ok(abs) = std::fs::canonicalize(p) {
+        if let Some(n) = abs.file_name() {
+            return n.to_string_lossy().into_owned();
+        }
+    }
+    p.display().to_string()
+}
+
 /// 广度优先遍历。`max_depth = 1` 只看根目录的直接子目录。
 pub fn scan(root: &Path, max_depth: u32, limit: usize) -> Result<ScanResult, String> {
     let started = Instant::now();
@@ -100,10 +114,7 @@ pub fn scan(root: &Path, max_depth: u32, limit: usize) -> Result<ScanResult, Str
     if let Some(kind) = is_repo_marker(root) {
         repos.push(RepoRef {
             path: root.display().to_string(),
-            name: root
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| root.display().to_string()),
+            name: dir_name(root),
             rel: String::new(),
             kind: kind.to_string(),
         });

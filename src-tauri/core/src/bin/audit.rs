@@ -33,9 +33,13 @@ const USAGE_ZH: &str = r#"gittracer-audit —— 发版 / 交付前的多仓库�
   --baseline <文件>  上一次巡检的 JSON 报告（--format json --out 存的那种）。
                      之后结论只看**新增**问题：第一次接入跑出来全红不稀奇，
                      存一份基线，门禁从下次起只盯新冒出来的。
-  --format <格式>    text（默认）/ md / json / sarif
+  --format <格式>    text（默认）/ md / json / sarif / gitlab
                      sarif 可用 github/codeql-action/upload-sarif 传到
                      仓库的 Code scanning 页
+                     gitlab 是 GitLab Code Quality（CodeClimate）格式：
+                     --out gl-code-quality-report.json，
+                     再在 .gitlab-ci.yml 里声明 artifacts:reports:codequality
+                     路径是相对项目根目录的，仓库级结论挂在仓库目录上
   --out <文件>       写到文件；"-" 表示标准输出
   --fail-on <级别>   error（默认）/ warn / never —— 决定退出码
   --lang <语言>      zh / en；不写就看 GITTRACER_LANG、LC_ALL、LANG，再没有就 zh
@@ -59,6 +63,7 @@ const USAGE_ZH: &str = r#"gittracer-audit —— 发版 / 交付前的多仓库�
   gittracer-audit . --format md --out audit.md --fail-on warn
   gittracer-audit . --format json --out baseline.json --fail-on never   # 存基线
   gittracer-audit . --baseline baseline.json    # 从此只拦新增
+  gittracer-audit . --format gitlab --out gl-code-quality-report.json --fail-on never
 "#;
 
 const USAGE_EN: &str = r#"gittracer-audit — pre-release audit across many repositories (read-only)
@@ -85,9 +90,14 @@ Options:
                      From then on only **new** findings count: a first run that is
                      all red is normal, so snapshot it and let the gate watch what
                      shows up next.
-  --format <fmt>     text (default) / md / json / sarif
+  --format <fmt>     text (default) / md / json / sarif / gitlab
                      sarif can be uploaded with github/codeql-action/upload-sarif
                      and shows up under the repo's Code scanning tab
+                     gitlab is the Code Quality (CodeClimate) report: write it
+                     with --out gl-code-quality-report.json and declare it as
+                     artifacts:reports:codequality in .gitlab-ci.yml.
+                     Paths are relative to the project root; repo-level
+                     findings are anchored on the repository directory.
   --out <file>       Write to a file; "-" means stdout
   --fail-on <level>  error (default) / warn / never — decides the exit code
   --lang <lang>      zh / en; defaults to GITTRACER_LANG, LC_ALL, LANG, then zh
@@ -111,6 +121,7 @@ Examples:
   gittracer-audit . --format md --out audit.md --fail-on warn
   gittracer-audit . --format json --out baseline.json --fail-on never   # snapshot
   gittracer-audit . --baseline baseline.json    # only new findings from now on
+  gittracer-audit . --format gitlab --out gl-code-quality-report.json --fail-on never
 "#;
 
 fn usage() -> &'static str {
@@ -123,6 +134,8 @@ enum Format {
     Markdown,
     Json,
     Sarif,
+    /// GitLab Code Quality（CodeClimate 的报告格式，字段更少）
+    Gitlab,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -177,6 +190,7 @@ fn main() -> ExitCode {
         Format::Markdown => audit::render_markdown(&report),
         Format::Json => audit::render_json(&report),
         Format::Sarif => audit::render_sarif(&report),
+        Format::Gitlab => audit::render_gitlab(&report),
     };
 
     match cli.out.as_deref() {
@@ -351,10 +365,12 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Cli>, String>
                     "md" | "markdown" => Format::Markdown,
                     "json" => Format::Json,
                     "sarif" => Format::Sarif,
+                    // Code Quality 就是 CodeClimate 的裁剪版，两个叫法都认
+                    "gitlab" | "codeclimate" | "code-quality" => Format::Gitlab,
                     other => {
                         return Err(tr!(
-                            "不认识的 --format：{other}（text / md / json / sarif）",
-                            "Unknown --format: {other} (text / md / json / sarif)",
+                            "不认识的 --format：{other}（text / md / json / sarif / gitlab）",
+                            "Unknown --format: {other} (text / md / json / sarif / gitlab)",
                             other = other
                         ))
                     }

@@ -4,6 +4,9 @@ src-tauri/gen/schemas/
 .tmp/
 out.png
 GitTracer-*-portable.zip
+# 巡检产物：本地照 .gitlab-ci.yml / audit.yml 跑一遍就会落在仓库根上
+/audit.md
+/gl-code-quality-report.json
 *.log
 .DS_Store
 Thumbs.db
