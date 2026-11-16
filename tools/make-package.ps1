@@ -30,6 +30,18 @@ Copy-Item $releaseExe $appExe -Force
 # 巡检命令行程序（console 子系统，CI 里直接调，按返回码判定）
 $releaseAudit = Join-Path $root 'src-tauri\target\release\gittracer-audit.exe'
 if (-not (Test-Path $releaseAudit)) { throw "找不到 $releaseAudit，先跑 release 构建" }
+
+# 版本闸门：workspace 下 `cargo build --release` 只重建 git-tracer 这个包，
+# core 里的 gittracer-audit 不会被带上（要 -p git-tracer-core --bin gittracer-audit）。
+# 包里混进一个上一版的 CLI，比缺文件更难发现 —— 所以打完包先对版本。
+$appVer = (Get-Item $releaseExe).VersionInfo.ProductVersion
+if ($appVer -ne $version) {
+    throw "git-tracer.exe 的版本是 $appVer，package.json 是 $version，先重新构建"
+}
+$auditVer = (& $releaseAudit --version) -join ' '
+if ($auditVer -notmatch [regex]::Escape($version)) {
+    throw "gittracer-audit 版本不对（$auditVer，期望 $version）：先跑 cargo build --release -p git-tracer-core --bin gittracer-audit"
+}
 Copy-Item $releaseAudit (Join-Path $stage 'gittracer-audit.exe') -Force
 
 # ---------------------------------------------------------------- 使用说明

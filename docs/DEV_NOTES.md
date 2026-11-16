@@ -292,6 +292,11 @@ docs/
   上面的回退也就无处可回。对象在 `fetch-depth: 0` 时已经落地，这步只补 refs，几乎不花时间。
 - **`tools/` 进版本库**：`.gitignore` 去掉整目录的 `tools/`（产物 `GitTracer-*-portable.zip` 仍忽略）。
   7 个脚本 64KB：打包、install.ps1、演示仓库、图标、CDP 截图、动图录制。
+- **打包脚本加了版本闸门**：workspace 下 `cargo build --release` 只重建 `git-tracer` 这个包，
+  core 里的 `gittracer-audit` **不会**跟着重建（要 `-p git-tracer-core --bin gittracer-audit`）。
+  make-package.ps1 只是照抄 target/release 下的两个 exe，于是很容易打出一个「GUI 新版 +
+  CLI 旧版」的包——比缺文件更难发现。现在打包前先对版本：GUI 读 `VersionInfo.ProductVersion`，
+  CLI 没有版本资源、跑 `--version` 取字符串，任一对不上直接 throw 并提示该跑哪条命令。
 - **测试**：core 43 项（新增两项用真仓库验证基准解析：本地分支优先、仅 `origin/main` 时回退，
   且回退后 `unmerged_finding` 不再报未生效）。这类用例要跑 git，写法上「git 不可用就 return 跳过」，
   别把环境缺失算成测试失败。
