@@ -8,4 +8,4 @@ GitTracer-*-portable.zip
 .DS_Store
 Thumbs.db
 .workbuddy
-tools/
+# tools/ 是打包与截图脚本的所在地，跟着版本库走：别人才复现得出 portable 包
