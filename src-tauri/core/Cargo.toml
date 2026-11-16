@@ -1,0 +1,20 @@
+[package]
+name = "git-tracer-core"
+version = "0.9.0"
+edition = "2021"
+description = "Git Tracer 核心逻辑：扫描 / 巡检 / 配置，外加 gittracer-audit 命令行"
+
+# 独立于 GUI 主包：巡检要进 CI（Linux runner、无界面的服务器），不能拖着
+# tauri 整棵依赖树——那需要 webkit2gtk 一整套系统库。这里只依赖 serde 和 git。
+[lib]
+name = "git_tracer_core"
+
+[[bin]]
+name = "gittracer-audit"
+path = "src/bin/audit.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 只为了读 `.gittracer.toml`；关掉 display 一侧，少链一个写回 TOML 的库
+toml = { version = "0.9", default-features = false, features = ["std", "parse", "serde"] }

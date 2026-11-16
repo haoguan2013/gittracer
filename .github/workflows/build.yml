@@ -1,0 +1,93 @@
+# 构建巡检 CLI —— 三个平台各出一份二进制。
+#
+# 巡检要当门禁，前提是 runner 上有它能跑：GitHub Actions 的 Linux / macOS
+# runner 都不是 Windows。所以核心逻辑拆在 git-tracer-core（不依赖 tauri），
+# 这里只需要 rust + git，不装任何 GUI 系统库。
+#
+# 打 v* 标签：三份 CLI 挂到 GitHub Release；
+# 平时手动触发：只上传 workflow artifact，不动 Release。
+#
+# Windows 的便携 GUI 包（GitTracer-x.x.x-portable.zip）仍由本地
+# tools/make-package.ps1 手动制作后上传，原因见 README 的发版说明。
+
+name: 构建 CLI
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write # tag 触发时把文件挂到 Release 需要
+
+jobs:
+  cli:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: linux-x64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            name: macos-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: windows-x64
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: 缓存 cargo 构建
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # 顺手在三个平台上都跑一遍单测：跨平台行为不是「编译过了」就完事
+      - name: 单元测试
+        run: cargo test --quiet -p git-tracer-core --manifest-path src-tauri/Cargo.toml
+
+      - name: 构建 gittracer-audit
+        run: >
+          cargo build --release --locked
+          -p git-tracer-core --bin gittracer-audit
+          --target ${{ matrix.target }}
+          --manifest-path src-tauri/Cargo.toml
+
+      - name: 打包（unix）
+        if: runner.os != 'Windows'
+        run: |
+          cd "src-tauri/target/${{ matrix.target }}/release"
+          cp ../../../../LICENSE .
+          tar czf ../../../../gittracer-audit-${{ matrix.name }}.tar.gz gittracer-audit LICENSE
+
+      - name: 打包（windows）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dir = "src-tauri/target/${{ matrix.target }}/release"
+          if (-not (Test-Path "$dir/gittracer-audit.exe")) { throw "找不到 $dir/gittracer-audit.exe" }
+          Compress-Archive -Path "$dir/gittracer-audit.exe", "LICENSE" `
+            -DestinationPath "gittracer-audit-${{ matrix.name }}.zip"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: gittracer-audit-${{ matrix.name }}
+          path: gittracer-audit-${{ matrix.name }}.*
+
+      - name: 挂到 GitHub Release（仅打 tag 时）
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: gittracer-audit-${{ matrix.name }}.*

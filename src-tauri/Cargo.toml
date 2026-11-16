@@ -1,33 +1,32 @@
 [package]
 name = "git-tracer"
-version = "0.8.0"
+version = "0.9.0"
 description = "Git Tracer - 一眼看清目录下所有仓库的待提交内容"
 authors = [""]
 edition = "2021"
+
+# 巡检核心已拆到 core/（纯逻辑，不依赖 tauri）：CLI 要跑在无 GUI 的
+# Linux CI runner 和服务器上，拖着 tauri 就得装一整套 webkit2gtk。
+[workspace]
+members = ["core"]
 
 [lib]
 name = "git_tracer_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
-# 两个可执行文件：GUI 主程序 + 只跑巡检的控制台程序。
-# 后者必须是 console 子系统才能拿到 stdout，所以不能合进主程序。
+# GUI 主程序。巡检 CLI（gittracer-audit）挪进了 core —— 它不属于这里，
+# 免得在 Linux 上构建 CLI 也得拉 tauri 的系统依赖。
 [[bin]]
 name = "git-tracer"
 path = "src/main.rs"
-
-[[bin]]
-name = "gittracer-audit"
-path = "src/bin/audit.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+git-tracer-core = { path = "core" }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-# 只为了读 `.gittracer.toml`；关掉 display 一侧，少链一个写回 TOML 的库
-toml = { version = "0.9", default-features = false, features = ["std", "parse", "serde"] }
 
 [profile.release]
 panic = "abort"

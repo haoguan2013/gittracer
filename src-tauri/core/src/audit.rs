@@ -34,7 +34,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::config::{self, Rules};
 use crate::git;
@@ -62,6 +62,11 @@ pub struct Options {
     pub max_repos: usize,
     /// 是否读取目录 / 仓库里的 `.gittracer.toml`
     pub use_config: bool,
+    /// 基线：上一次报告里的 (仓库, 规则) 集合。这次还出现的不算「新增」，
+    /// 不计入结论——第一次接入全红的团队，第二次跑只看到新问题。
+    pub baseline: Option<HashSet<String>>,
+    /// 基线文件路径，只用来进报告头和拼等价命令行
+    pub baseline_file: Option<String>,
 }
 
 impl Default for Options {
@@ -75,6 +80,8 @@ impl Default for Options {
             strict: None,
             max_repos: 2000,
             use_config: true,
+            baseline: None,
+            baseline_file: None,
         }
     }
 }
@@ -95,7 +102,7 @@ pub const RULES: &[&str] = &[
     "no-remote",
 ];
 
-#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     /// 阻断项：这一条不过，就不该发版
@@ -117,7 +124,7 @@ impl Severity {
 }
 
 /// 规则在问哪一类问题。报告按这个分组，「能不能发」只看 [`Scope::Release`]。
-#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
 pub enum Scope {
     /// 发出去的那个提交本身有毛病：冲突、半途的变基、分离 HEAD、没推、分支不对
@@ -126,7 +133,7 @@ pub enum Scope {
     Workspace,
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Finding {
     pub code: String,
     pub severity: Severity,
@@ -134,6 +141,17 @@ pub struct Finding {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// 只在带基线跑时有值：这条是新问题，还是上一次就有的已知问题。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<BaselineState>,
+}
+
+/// 基线里就有 → `Known`（不计入结论）；这次新冒出来的 → `New`。
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BaselineState {
+    Known,
+    New,
 }
 
 impl Finding {
@@ -144,6 +162,7 @@ impl Finding {
             scope,
             message: message.into(),
             detail: None,
+            baseline: None,
         }
     }
 
@@ -153,7 +172,7 @@ impl Finding {
     }
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RepoAudit {
     pub name: String,
     pub path: String,
@@ -195,7 +214,7 @@ impl RepoAudit {
 
 /// 三个结论。之前只有「通过 / 未通过」两档，脏树一律算未通过，
 /// 于是每台开发机都是全红；现在中间多一档「注意」：能发，但有活没提交。
-#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Verdict {
     /// 没有阻断项，也没有提示
@@ -216,7 +235,10 @@ impl Verdict {
     }
 }
 
-#[derive(Serialize, Clone, Debug, Default)]
+// 基线文件可能是老版本写的（没有 known_* / workspace 字段），
+// 缺的字段按 0 补——已知项数本来就是「没有基线」的退化情形。
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(default)]
 pub struct Totals {
     pub repos: usize,
     pub passed: usize,
@@ -226,9 +248,22 @@ pub struct Totals {
     pub infos: usize,
     /// 有工作区待办的仓库数（这些仓库可能同时通过）
     pub workspace: usize,
+    /// 基线里就有的（已知）阻断 / 提示数。不计入结论，只进报告。
+    pub known_errors: usize,
+    pub known_warnings: usize,
 }
 
-#[derive(Serialize, Clone, Debug)]
+impl Totals {
+    /// 本次新冒出来的阻断数：结论和退出码只看它。
+    pub fn new_errors(&self) -> usize {
+        self.errors.saturating_sub(self.known_errors)
+    }
+    pub fn new_warnings(&self) -> usize {
+        self.warnings.saturating_sub(self.known_warnings)
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Report {
     pub generated_at: String,
     pub roots: Vec<String>,
@@ -245,6 +280,9 @@ pub struct Report {
     /// 给进来但用不了的根目录（不存在 / 不是目录）。不静默跳过：
     /// CI 里把目录名拼错，跳过就等于「一份空报告、结论通过」，那是假通过。
     pub root_errors: Vec<String>,
+    /// 基线文件路径；没带基线跑就没有。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub baseline_file: Option<String>,
     pub repos: Vec<RepoAudit>,
     pub totals: Totals,
     pub verdict: Verdict,
@@ -252,10 +290,10 @@ pub struct Report {
 }
 
 impl Report {
-    /// 退出码用这个：只看阻断项，提示不影响「能不能发」。
-    /// 根目录有问题也算不过——它会让整份报告缺东西。
+    /// 退出码用这个：只看**新增**阻断项，已知项不影响「能不能发」。
+    /// 根目录的问题基线救不了：它让报告缺东西，永远算不过。
     pub fn passed(&self) -> bool {
-        self.totals.errors == 0 && self.root_errors.is_empty()
+        self.totals.new_errors() == 0 && self.root_errors.is_empty()
     }
 
     pub fn verdict_word(&self) -> &'static str {
@@ -421,6 +459,14 @@ pub fn run(opts: &Options) -> Result<Report, String> {
         }
     }
 
+    // 基线：把上一次报告里就有的问题标成 Known，只数这次新冒出来的。
+    // 这是「第一次接入全红」的解药：先存一份基线，之后门禁只盯新问题。
+    if let Some(set) = &opts.baseline {
+        let (ke, kw) = apply_baseline(&mut repos, set);
+        totals.known_errors = ke;
+        totals.known_warnings = kw;
+    }
+
     // 报告头部的这几项是「默认值」：第一个根目录那一层解析出来的结果。
     // 仓库各有覆盖时以 JSON 里每个仓库的 effective_skip / config 为准。
     let head_rules = Rules::resolve(
@@ -432,9 +478,9 @@ pub fn run(opts: &Options) -> Result<Report, String> {
         roots.first().and_then(|(_, c)| c.as_ref()),
     );
 
-    let verdict = if totals.errors > 0 || !root_errors.is_empty() {
+    let verdict = if totals.new_errors() > 0 || !root_errors.is_empty() {
         Verdict::Blocked
-    } else if totals.warnings > 0 {
+    } else if totals.new_warnings() > 0 {
         Verdict::Attention
     } else {
         Verdict::Passed
@@ -453,6 +499,7 @@ pub fn run(opts: &Options) -> Result<Report, String> {
         strict: head_rules.strict,
         config_files,
         root_errors,
+        baseline_file: opts.baseline_file.clone(),
         repos,
         totals,
         verdict,
@@ -541,6 +588,59 @@ fn note_config(list: &mut Vec<String>, path: &str) {
     if !list.iter().any(|p| path_key(p) == path_key(path)) {
         list.push(path.to_string());
     }
+}
+
+/* ---------------------------------------------------------------- 基线 */
+
+/// (仓库路径, 规则 code) 的匹配键。不用 message：脏树从 3 处变 5 处还是
+/// 同一个问题，没必要算成「新增」吓人一跳。
+fn baseline_key(repo_path: &str, code: &str) -> String {
+    format!("{}|{}", path_key(repo_path), code.to_lowercase())
+}
+
+/// 给每个 finding 打上 Known / New，返回 (已知阻断数, 已知提示数)。
+///
+/// 标记只影响结论（verdict / 退出码），不会把已知项藏起来——报告里照样列，
+/// 只是挂上「已知」的说明。门禁只盯新问题，但审计时历史一项不少。
+fn apply_baseline(repos: &mut [RepoAudit], set: &HashSet<String>) -> (usize, usize) {
+    let mut known_errors = 0;
+    let mut known_warnings = 0;
+    for repo in repos.iter_mut() {
+        let rk = path_key(&repo.path);
+        for f in repo.findings.iter_mut() {
+            let known = set.contains(&baseline_key(&rk, &f.code));
+            f.baseline = Some(if known {
+                match f.severity {
+                    Severity::Error => known_errors += 1,
+                    Severity::Warn => known_warnings += 1,
+                    Severity::Info => {}
+                }
+                BaselineState::Known
+            } else {
+                BaselineState::New
+            });
+        }
+    }
+    (known_errors, known_warnings)
+}
+
+/// 从上一次的 JSON 报告（`--format json --out xxx.json` 的产物）读出基线集合。
+///
+/// 故意容忍字段缺失：旧版本写的报告没有 `known_*` / `baseline_file`，
+/// serde 的 `#[serde(default)]`……不需要——`Totals` 有 `Default` 且字段全有默认，
+/// `Option` 字段缺了就是 `None`，天然向前兼容。解析不了就报错退出 2，
+/// 不许静默当「没有基线」跑——那等于门禁悄悄变松。
+pub fn load_baseline(text: &str) -> Result<HashSet<String>, String> {
+    let report: Report = serde_json::from_str(text)
+        .map_err(|e| format!("基线文件不是有效的巡检报告 JSON：{e}"))?;
+    let mut set = HashSet::new();
+    for repo in &report.repos {
+        let rk = path_key(&repo.path);
+        for f in &repo.findings {
+            set.insert(baseline_key(&rk, &f.code));
+        }
+    }
+    Ok(set)
 }
 
 /// 校验命令行 / 界面直接给的值。配置文件里的值在 `config::load` 里已经校验过。
@@ -885,6 +985,111 @@ pub fn render_json(report: &Report) -> String {
     s
 }
 
+/* ---------------------------------------------------------------- SARIF */
+
+/// SARIF 2.1.0（GitHub code scanning 用的格式）。规则表：id + 一句话说明，
+/// `properties` 里带分组和默认级别，code scanning 的 UI 都能读。
+fn sarif_rules() -> Vec<serde_json::Value> {
+    const RULES: &[(&str, &str, &str, &str)] = &[
+        ("conflict", "Files left in conflict state", "release", "error"),
+        ("operation", "A merge / rebase / cherry-pick / revert / bisect is in progress", "release", "error"),
+        ("detached", "HEAD is detached from any branch", "release", "error"),
+        ("unpushed", "Commits not pushed to upstream", "release", "error"),
+        ("branch", "Current branch is not in the allow list", "release", "error"),
+        ("config-error", "Repo-level .gittracer.toml failed to parse", "release", "error"),
+        ("read-error", "Cannot read repository status", "release", "error"),
+        ("dirty", "Uncommitted changes in the working tree", "workspace", "warning"),
+        ("behind", "Local branch is behind its remote", "workspace", "warning"),
+        ("no-upstream", "Current branch has no upstream", "workspace", "warning"),
+        ("stash", "Stash entries left behind", "workspace", "warning"),
+        ("unmerged", "Local branches not merged into the base branch", "workspace", "warning"),
+        ("config-note", "Repo-level depth key ignored", "release", "note"),
+        ("no-remote", "No remote configured", "release", "note"),
+    ];
+    RULES
+        .iter()
+        .map(|(id, desc, scope, level)| {
+            serde_json::json!({
+                "id": id,
+                "shortDescription": { "text": desc },
+                "properties": { "scope": scope, "defaultLevel": level },
+            })
+        })
+        .collect()
+}
+
+/// 渲染成 SARIF 2.1.0。这是把巡检结果送进 GitHub「Code scanning」标签页的
+/// 那张门票：`--format sarif --out audit.sarif` 后用
+/// `github/codeql-action/upload-sarif` 上传，仓库页上就能看到。
+/// 基线里已知的项会带上 suppressions（code scanning 默认折叠已抑制项）。
+pub fn render_sarif(report: &Report) -> String {
+    let rules = sarif_rules();
+    let index_of = |code: &str| rules.iter().position(|r| r["id"] == code);
+
+    let mut results: Vec<serde_json::Value> = Vec::new();
+    for repo in &report.repos {
+        for f in &repo.findings {
+            let Some(rule_index) = index_of(&f.code) else { continue };
+            let level = match f.severity {
+                Severity::Error => "error",
+                Severity::Warn => "warning",
+                Severity::Info => "note",
+            };
+            // message 里带上仓库和分支：code scanning 列表页只显示 message，
+            // 不带仓库名的话「3 条 dirty」分不清是谁家的。
+            let mut text = format!("{} · 仓库 {}@{}", f.message, repo.name, repo.branch.as_deref().unwrap_or("detached"));
+            if let Some(d) = &f.detail {
+                text.push_str(&format!(" · {d}"));
+            }
+            let mut result = serde_json::json!({
+                "ruleId": f.code,
+                "ruleIndex": rule_index,
+                "level": level,
+                "message": { "text": text },
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": { "uri": repo.path }
+                    }
+                }],
+                "partialFingerprints": {
+                    "gittracer/v1": baseline_key(&repo.path, &f.code)
+                },
+            });
+            if f.baseline == Some(BaselineState::Known) {
+                result["suppressions"] = serde_json::json!([{
+                    "kind": "external",
+                    "status": "accepted",
+                    "justification": "Known issue present in the baseline report"
+                }]);
+            }
+            results.push(result);
+        }
+    }
+
+    let sarif = serde_json::json!({
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "gittracer-audit",
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "informationUri": "https://github.com/haoguan2013/gittracer",
+                    "rules": rules,
+                }
+            },
+            "invocations": [{
+                "executionSuccessful": report.passed(),
+                "endTimeUtc": report.generated_at,
+            }],
+            "results": results,
+        }]
+    });
+    let mut s = serde_json::to_string_pretty(&sarif).unwrap_or_else(|_| "{}".to_string());
+    s.push('\n');
+    s
+}
+
 pub fn render_text(report: &Report) -> String {
     let mut out = String::new();
     out.push_str(&format!("Git Tracer 巡检  {}\n", report.generated_at));
@@ -892,6 +1097,11 @@ pub fn render_text(report: &Report) -> String {
     out.push_str(&format!("深度    {}\n", report.depth));
     out.push_str(&format!("基准    {}\n", base_text(report)));
     out.push_str(&format!("模式    {}\n", mode_text(report)));
+    if let Some(b) = &report.baseline_file {
+        out.push_str(&format!(
+            "基线    {b}（已知项不计入结论，只盯新问题）\n"
+        ));
+    }
     // 用不了的根目录放在最前面说：它会让整份报告缺东西，不能藏在结尾
     for e in &report.root_errors {
         out.push_str(&format!("不可用  {e}（已跳过，其余照常）\n"));
@@ -934,8 +1144,14 @@ pub fn render_text(report: &Report) -> String {
             ));
         }
         for f in &repo.findings {
+            // 已知项不藏起来，只是挂上说明：门禁盯新问题，审计要看到全部
+            let known = if f.baseline == Some(BaselineState::Known) {
+                "（已知）"
+            } else {
+                ""
+            };
             out.push_str(&format!(
-                "      {:<5}  {:<12} {}\n",
+                "      {:<5}  {:<12} {}{known}\n",
                 f.severity.word(),
                 f.code,
                 f.message
@@ -971,6 +1187,15 @@ pub fn render_text(report: &Report) -> String {
             }
         ));
     }
+    if report.baseline_file.is_some() {
+        out.push_str(&format!(
+            "基线    新增 {} 阻断 / {} 提示 · 已知 {} / {} 不计入结论\n",
+            t.new_errors(),
+            t.new_warnings(),
+            t.known_errors,
+            t.known_warnings
+        ));
+    }
     out
 }
 
@@ -984,6 +1209,12 @@ pub fn render_markdown(report: &Report) -> String {
     out.push_str(&format!("| 扫描深度 | {} |\n", report.depth));
     out.push_str(&format!("| 基准分支 | {} |\n", base_text(report)));
     out.push_str(&format!("| 检查模式 | {} |\n", mode_text(report)));
+    if let Some(b) = &report.baseline_file {
+        out.push_str(&format!(
+            "| 基线 | `{}`（已知项不计入结论） |\n",
+            md_escape(b)
+        ));
+    }
     if !report.branch_allow.is_empty() {
         out.push_str(&format!(
             "| 允许分支 | {} |\n",
@@ -1013,6 +1244,15 @@ pub fn render_markdown(report: &Report) -> String {
         t.warnings + t.infos,
         report.elapsed_ms as f64 / 1000.0
     ));
+    if report.baseline_file.is_some() {
+        out.push_str(&format!(
+            "结论只看新增：**{} 新增阻断 / {} 新增提示**；另有已知 {} / {} 项在基线里，不计入。\n\n",
+            t.new_errors(),
+            t.new_warnings(),
+            t.known_errors,
+            t.known_warnings
+        ));
+    }
 
     let failed: Vec<&RepoAudit> = report.repos.iter().filter(|r| r.failed()).collect();
     let passed: Vec<&RepoAudit> = report.repos.iter().filter(|r| !r.failed()).collect();
@@ -1040,8 +1280,13 @@ pub fn render_markdown(report: &Report) -> String {
             }
             out.push_str("| 级别 | 规则 | 说明 |\n| --- | --- | --- |\n");
             for f in &repo.findings {
+                let known = if f.baseline == Some(BaselineState::Known) {
+                    "（已知，不计入结论）"
+                } else {
+                    ""
+                };
                 out.push_str(&format!(
-                    "| {} | {} | {} |\n",
+                    "| {} | {} | {}{known} |\n",
                     f.severity.word(),
                     md_escape(&f.code),
                     md_escape(&f.message)
@@ -1138,6 +1383,9 @@ pub fn command_line(opts: &Options) -> String {
     }
     if !opts.use_config {
         parts.push("--no-config".to_string());
+    }
+    if let Some(b) = &opts.baseline_file {
+        parts.push(format!("--baseline \"{b}\""));
     }
     parts.push("--fail-on error".to_string());
     parts.join(" ")
@@ -1491,6 +1739,7 @@ mod tests {
             strict: false,
             config_files: vec![],
             root_errors: vec![],
+            baseline_file: None,
             repos,
             totals: Totals {
                 repos: 1,
@@ -1534,5 +1783,169 @@ mod tests {
             ..Default::default()
         };
         assert!(!command_line(&opts).contains("--strict"));
+    }
+
+    /* ---------------- 基线 ---------------- */
+
+    /// 两个仓库各一条 finding，基线只认识其中一个仓库的 dirty
+    #[test]
+    fn baseline_marks_known_findings() {
+        let mut a = dirty_only(false);
+        a.path = "D:/w/api".into();
+        let mut b = dirty_only(true); // strict 下 dirty 是阻断
+        b.path = "D:/w/beta".into();
+
+        let mut set = HashSet::new();
+        // 故意换大小写：基线键的归一化和去重键是同一套
+        set.insert(baseline_key("D:/W/API", "dirty"));
+        let mut repos = [a, b];
+        let (ke, kw) = apply_baseline(&mut repos, &set);
+
+        assert_eq!((ke, kw), (0, 1), "api 的 dirty 是提示级、在基线里");
+        // beta 的 dirty 是阻断、不在基线里 → New
+        // api 的 dirty 在基线里 → Known
+        assert_eq!(repos[0].findings[0].baseline, Some(BaselineState::Known));
+        assert_eq!(repos[1].findings[0].baseline, Some(BaselineState::New));
+    }
+
+    #[test]
+    fn known_blockers_do_not_fail_the_gate() {
+        // 全是已知项：门禁放行
+        let mut t = Totals { errors: 2, warnings: 1, ..Default::default() };
+        t.known_errors = 2;
+        t.known_warnings = 1;
+        assert_eq!(t.new_errors(), 0);
+        let report = Report {
+            generated_at: String::new(),
+            roots: vec![],
+            depth: 1,
+            base: None,
+            branch_allow: vec![],
+            skipped: vec![],
+            strict: false,
+            config_files: vec![],
+            root_errors: vec![],
+            baseline_file: Some("baseline.json".into()),
+            repos: vec![],
+            totals: t,
+            verdict: Verdict::Passed,
+            elapsed_ms: 0,
+        };
+        assert!(report.passed(), "两个都是已知项，不该拦");
+        // 混进一个新阻断：拦下
+        let mut t2 = report.totals.clone();
+        t2.errors = 3;
+        let mut r2 = report;
+        r2.totals = t2;
+        assert!(!r2.passed(), "第三个是新的，必须拦");
+    }
+
+    #[test]
+    fn baseline_roundtrip_through_json() {
+        let repo = dirty_only(false);
+        let report = Report {
+            generated_at: "2026-11-16T00:00:00Z".into(),
+            roots: vec!["D:/w".into()],
+            depth: 1,
+            base: None,
+            branch_allow: vec![],
+            skipped: vec![],
+            strict: false,
+            config_files: vec![],
+            root_errors: vec![],
+            baseline_file: None,
+            repos: vec![repo],
+            totals: Totals::default(),
+            verdict: Verdict::Attention,
+            elapsed_ms: 0,
+        };
+        let json = render_json(&report);
+        let set = load_baseline(&json).expect("自己刚写的 JSON 一定读得回");
+        assert!(set.contains(&baseline_key("D:/w/api", "dirty")));
+        // 大小写不同也认得：键的归一化和报告里存的是同一套
+        assert!(set.contains(&baseline_key("D:/W/API", "DIRTY")));
+        // 不是合法 JSON 的文件要报错，不能静默当「没有基线」
+        assert!(load_baseline("not json").is_err());
+    }
+
+    #[test]
+    fn baseline_in_command_line() {
+        let opts = Options {
+            roots: vec![PathBuf::from(".")],
+            baseline_file: Some("baseline.json".into()),
+            ..Default::default()
+        };
+        let cmd = command_line(&opts);
+        assert!(cmd.contains("--baseline \"baseline.json\""), "{cmd}");
+    }
+
+    /* ---------------- SARIF ---------------- */
+
+    #[test]
+    fn sarif_lists_findings_with_matching_rules() {
+        let repo = dirty_only(true);
+        let report = Report {
+            generated_at: "2026-11-16T00:00:00Z".into(),
+            roots: vec!["D:/w".into()],
+            depth: 1,
+            base: None,
+            branch_allow: vec![],
+            skipped: vec![],
+            strict: true,
+            config_files: vec![],
+            root_errors: vec![],
+            baseline_file: None,
+            repos: vec![repo],
+            totals: Totals { errors: 1, ..Default::default() },
+            verdict: Verdict::Blocked,
+            elapsed_ms: 0,
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&render_sarif(&report)).expect("SARIF 必须是合法 JSON");
+        assert_eq!(v["version"], "2.1.0");
+        assert_eq!(v["runs"][0]["tool"]["driver"]["name"], "gittracer-audit");
+        let results = &v["runs"][0]["results"];
+        assert_eq!(results.as_array().map(|a| a.len()), Some(1));
+        assert_eq!(results[0]["ruleId"], "dirty");
+        assert_eq!(results[0]["level"], "error");
+        // ruleIndex 必须真指到 ruleId 那一项，code scanning 会按它取规则
+        let idx = results[0]["ruleIndex"].as_u64().unwrap() as usize;
+        let rules = &v["runs"][0]["tool"]["driver"]["rules"];
+        assert_eq!(rules[idx]["id"], "dirty");
+        assert!(results[0]["message"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("api"), "列表页只显示 message，得带上仓库名");
+        assert_eq!(
+            v["runs"][0]["invocations"][0]["executionSuccessful"], false,
+            "有阻断时 executionSuccessful 必须是 false"
+        );
+    }
+
+    #[test]
+    fn sarif_suppresses_known_findings() {
+        let mut repo = dirty_only(false);
+        repo.findings[0].baseline = Some(BaselineState::Known);
+        let report = Report {
+            generated_at: String::new(),
+            roots: vec![],
+            depth: 1,
+            base: None,
+            branch_allow: vec![],
+            skipped: vec![],
+            strict: false,
+            config_files: vec![],
+            root_errors: vec![],
+            baseline_file: Some("b.json".into()),
+            repos: vec![repo],
+            totals: Totals::default(),
+            verdict: Verdict::Passed,
+            elapsed_ms: 0,
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&render_sarif(&report)).expect("SARIF 必须是合法 JSON");
+        let r = &v["runs"][0]["results"][0];
+        assert!(r.get("suppressions").is_some(), "已知项要带 suppressions");
+        assert_eq!(r["suppressions"][0]["kind"], "external");
     }
 }

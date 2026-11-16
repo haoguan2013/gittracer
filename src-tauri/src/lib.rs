@@ -4,22 +4,24 @@
 //! 前端友好的结构。所有命令都是 `async` + `spawn_blocking`：
 //! 同步命令会被内联在 IPC 线程（Windows 上就是 UI 主线程）执行，扫描几百个
 //! 目录会直接把窗口卡死。
+//!
+//! 扫描 / 巡检 / 配置的实现在 `git-tracer-core`（workspace 成员）里，
+//! 这里只是把它们包成 tauri 命令。
 
-pub mod audit;
-pub mod config;
 mod dialog;
-mod git;
-mod scan;
 
 use std::process::Command;
+
+use git_tracer_core::{audit, git, scan};
 
 use tauri::Manager;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// 让子进程（git / powershell / explorer）不要弹控制台窗口。
+/// 让子进程（powershell / explorer）不要弹控制台窗口。
 /// GUI 进程启动控制台程序时 Windows 默认会给它新建一个黑窗口。
+/// git 子进程的那份在 core 的 git.rs 里，跟 CLI 共用。
 #[cfg(windows)]
 pub(crate) fn hide_console(cmd: &mut Command) {
     use std::os::windows::process::CommandExt;

@@ -1,15 +1,15 @@
 //! `gittracer-audit` —— 命令行巡检入口。
 //!
-//! 单独编成 console 子系统的小 exe，而不是给 GUI 加参数：主程序是
-//! `windows_subsystem = "windows"`，从命令行启动既拿不到一个正常的 stdout
-//! （父控制台不会自动接上），还会白弹一个窗口，没法接在 CI 后面。
+//! 编在 `git-tracer-core` 里（不依赖 tauri）：这个程序要进 CI —— Linux runner、
+//! 无界面的服务器、别人仓库的 workflow——在那些建地方装一整套 webkit2gtk
+//! 既不现实也没道理。
 //!
-//! 逻辑全在 `git_tracer_lib::audit` 里，这里只做参数解析、输出和退出码。
+//! 逻辑全在 `git_tracer_core::audit` 里，这里只做参数解析、输出和退出码。
 
 use std::io::Write;
 use std::process::ExitCode;
 
-use git_tracer_lib::audit;
+use git_tracer_core::audit;
 
 const USAGE: &str = r#"gittracer-audit —— 发版 / 交付前的多仓库巡检（只读）
 
@@ -27,7 +27,12 @@ const USAGE: &str = r#"gittracer-audit —— 发版 / 交付前的多仓库巡�
   --strict           未提交改动也算阻断（从工作区直接打包发版时用这个）
   --no-strict        关掉配置文件里写的 strict
   --no-config        不读目录里的 .gittracer.toml
-  --format <格式>    text（默认）/ md / json
+  --baseline <文件>  上一次巡检的 JSON 报告（--format json --out 存的那种）。
+                     之后结论只看**新增**问题：第一次接入跑出来全红不稀奇，
+                     存一份基线，门禁从下次起只盯新冒出来的。
+  --format <格式>    text（默认）/ md / json / sarif
+                     sarif 可用 github/codeql-action/upload-sarif 传到
+                     仓库的 Code scanning 页
   --out <文件>       写到文件；"-" 表示标准输出
   --fail-on <级别>   error（默认）/ warn / never —— 决定退出码
   --quiet            不在 stderr 打印摘要
@@ -48,6 +53,8 @@ const USAGE: &str = r#"gittracer-audit —— 发版 / 交付前的多仓库巡�
   gittracer-audit --root D:\work --branch "main,release/*" --base main
   gittracer-audit . --strict      # 从工作区直接打包，脏树也算不能发
   gittracer-audit . --format md --out audit.md --fail-on warn
+  gittracer-audit . --format json --out baseline.json --fail-on never   # 存基线
+  gittracer-audit . --baseline baseline.json    # 从此只拦新增
 "#;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -55,6 +62,7 @@ enum Format {
     Text,
     Markdown,
     Json,
+    Sarif,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -98,6 +106,7 @@ fn main() -> ExitCode {
         Format::Text => audit::render_text(&report),
         Format::Markdown => audit::render_markdown(&report),
         Format::Json => audit::render_json(&report),
+        Format::Sarif => audit::render_sarif(&report),
     };
 
     match cli.out.as_deref() {
@@ -122,7 +131,8 @@ fn main() -> ExitCode {
     let code = match cli.fail_on {
         FailOn::Never => 0,
         FailOn::Error => u8::from(!report.passed()),
-        FailOn::Warn => u8::from(!report.passed() || report.totals.warnings > 0),
+        // 已知的提示不拦：基线的意义就是只盯新增
+        FailOn::Warn => u8::from(!report.passed() || report.totals.new_warnings() > 0),
     };
     ExitCode::from(code)
 }
@@ -174,6 +184,14 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Cli>, String>
             }
             "--quiet" | "-q" => quiet = true,
             "--no-config" => opts.use_config = false,
+            "--baseline" => {
+                let raw = value(&mut it, "--baseline")?;
+                let text = std::fs::read_to_string(&raw)
+                    .map_err(|e| format!("--baseline 读不了 {raw}：{e}"))?;
+                let set = audit::load_baseline(&text)?;
+                opts.baseline = Some(set);
+                opts.baseline_file = Some(raw);
+            }
             "--strict" => opts.strict = Some(true),
             "--no-strict" => opts.strict = Some(false),
             "--root" => opts
@@ -203,7 +221,12 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Cli>, String>
                     "text" | "txt" => Format::Text,
                     "md" | "markdown" => Format::Markdown,
                     "json" => Format::Json,
-                    other => return Err(format!("不认识的 --format：{other}（text / md / json）")),
+                    "sarif" => Format::Sarif,
+                    other => {
+                        return Err(format!(
+                            "不认识的 --format：{other}（text / md / json / sarif）"
+                        ))
+                    }
                 };
             }
             "--out" => out = Some(value(&mut it, "--out")?),

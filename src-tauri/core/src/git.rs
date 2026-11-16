@@ -14,7 +14,19 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
-use crate::hide_console;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// 让子进程（git）不要弹控制台窗口：GUI 进程启动控制台程序时
+/// Windows 默认会给它新建一个黑窗口。CLI 自己在终端里跑，无感。
+#[cfg(windows)]
+fn hide_console(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn hide_console(_cmd: &mut Command) {}
 
 /// 单个文件的变更条目（对应 porcelain v2 的一行）
 #[derive(Serialize, Clone, Debug)]

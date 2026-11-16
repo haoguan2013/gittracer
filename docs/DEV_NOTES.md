@@ -278,6 +278,31 @@ docs/
 
 ## 更新记录
 
+**0.9.0**
+
+- **核心拆 crate**：`src-tauri/core/`（`git-tracer-core`）装走 audit / config / git / scan 四个纯逻辑模块
+  和 `gittracer-audit` 这个 bin，不再依赖 tauri。动机是变现分析里的判断：CLI 要进 CI，而 GitHub 的
+  Linux runner 上构建 tauri 需要一整套 webkit2gtk 系统库。拆完 CLI 只链 serde + git，本机构建从
+  「全量 tauri」降到 13 秒；`cargo check --target x86_64-unknown-linux-gnu / aarch64-apple-darwin`
+  本地可验证（rustup 装目标要挂本地代理 7890，走 51009 环境代理会卡死）。
+- **SARIF 2.1.0 输出**（`--format sarif`）：14 条规则表（11 条正规则 + config-error / config-note /
+  read-error），results 带 `partialFingerprints`（code scanning 用它去重），message 里拼上「仓库名@分支」
+  ——列表页只显示 message，不带仓库名的话三条 dirty 分不清是谁家的。
+- **基线对比**（`--baseline <file>`）：`load_baseline` 从上一次 `--format json` 的报告读出
+  (仓库, 规则) 集合（键 = `path_key(仓库)|code`，message 故意不进键——脏树 3 处变 5 处还是同一个问题）；
+  `apply_baseline` 给每条 finding 打 Known / New；`Report::passed()` 和 verdict 只看
+  `totals.new_errors()`。根目录错误基线救不了（否则 CI 拼错路径会拿到假通过）。老版本报告做基线
+  也能读（`Totals` 加了 `#[serde(default)]`）。
+- **CI**：新增 `.github/workflows/build.yml` 三平台矩阵（linux-x64 / macos-arm64 / windows-x64），
+  每个 runner 上都跑 core 单测，打 `v*` 标签时把 CLI 包挂到 Release；`audit.yml` 构建命令改成
+  `-p git-tracer-core`，自检后加跑一次 `--format sarif`（`--fail-on never`），仅在本仓库上传
+  code scanning（workflow_call 的调用方没有 security-events 权限，跳过）。
+- **README**：中文补「基线：让门禁只盯新问题」小节、SARIF 用法、三平台下载；英文版同步；
+  双语末尾新增「商业版与私有部署」：核心永久免费承诺 + 三类付费场景 + 咨询邮箱
+  （用的是 git 历史里已有的 anderson@motiforce.com，没有暴露新信息）。
+- **portable GUI zip 仍手动出**：make-package.ps1 依赖 tools/ 里未入库的文件（install.ps1、
+  安装.cmd 等），CI 复刻不了；tools/ 是否入库这个悬而未决的问题继续留着。
+
 **0.8.0**
 
 - **`dirty` 从阻断降为提示，`Finding` 多一个 `scope` 字段**（`release` / `workspace`）。起因是

@@ -7,6 +7,39 @@
 
 ---
 
+## v0.9.0 — 门禁进场：三平台 CLI、SARIF、基线
+
+**发布**：2026-11-16 ・ **平台**：Windows 10/11（GUI）・ Windows / Linux / macOS（CLI） ・ **下载**：`GitTracer-0.9.0-portable.zip` + 三平台 CLI 压缩包
+
+一句话：这一版把巡检真正送进了 CI——不再只活在 Windows 桌面上。
+
+### 一、`gittracer-audit` 上了 Linux 和 macOS
+
+巡检核心（audit / scan / git / config）拆成了独立的 `git-tracer-core` crate，不再拖着 tauri 整棵依赖树——Linux runner 上构建它不需要 webkit2gtk 那套系统库，只要有 rust 和 git。GitHub Actions 的 Linux / macOS runner、无界面的服务器都能跑；Releases 里有三个平台的现成二进制，打 `v*` 标签时由 CI 自动构建并挂上。
+
+### 二、SARIF 输出：巡检结果进 Code scanning 标签页
+
+`--format sarif` 输出标准 SARIF 2.1.0。配合 `github/codeql-action/upload-sarif`，巡检结果直接显示在仓库的 Security 标签页里——哪条规则、哪个仓库、什么级别，点开就能看，不用翻 CI 日志找 artifact。本仓库自己的工作流已经在这么用。
+
+### 三、基线：第一次接入不再劝退
+
+第一次接入的团队几乎都会跑出一片红，大半还是「本来就这样」的老问题。现在可以：
+
+```
+gittracer-audit . --format json --out baseline.json --fail-on never   # 存基线
+gittracer-audit . --baseline baseline.json                             # 从此只拦新增
+```
+
+带上 `--baseline` 之后，上一次报告里就有的问题标成「已知」，不计入结论；新冒出来的才决定退出码。已知项在报告里照样列出（挂「已知」说明），门禁盯新问题，账本记全部账。
+
+### 四、README 双语 + 商业版咨询入口
+
+补齐了完整的英文版 README（不是一行摘要），中英互链。README 末尾新增「商业版与私有部署」一节：核心功能永久免费的承诺写在最前面，付费的是团队策略管理、报告归档对比、私有部署定制这些「之上」的东西，走邮件咨询。
+
+> 升级提示：`.gittracer.toml` 写法、命令行参数全部兼容 0.8；报告 JSON 新增 `baseline_file`、`known_errors`、`known_warnings`、`findings[].baseline` 字段，旧脚本按字段名取值的不会受影响。
+
+---
+
 ## v0.8.0 — 把「全红」修掉：一场巡检只该有一个结论
 
 **发布**：2026-11-13 ・ **平台**：Windows 10/11 ・ **下载**：`GitTracer-0.8.0-portable.zip`

@@ -1,6 +1,6 @@
 # Git Tracer
 
-![Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6) ![Tauri 2 + Rust](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20Rust-DEA584) ![零构建前端](https://img.shields.io/badge/Frontend-HTML%20%2F%20CSS%20%2F%20JS-3178C6) ![v0.8.0](https://img.shields.io/badge/Version-0.8.0-2F81F7) ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue)
+![Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6) ![Tauri 2 + Rust](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20Rust-DEA584) ![零构建前端](https://img.shields.io/badge/Frontend-HTML%20%2F%20CSS%20%2F%20JS-3178C6) ![v0.8.0](https://img.shields.io/badge/Version-0.9.0-2F81F7) ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue)
 
 **中文** · [English](README.en.md)
 
@@ -137,10 +137,11 @@ flowchart LR
 
 还有一点在后面：**它是并行的**。`git status` 是一次进程调用，一个带 node_modules 的仓库单次要一两秒，几十个仓库串行就是一分半——发版前没人愿意等。巡检按 CPU 核数并发（最多 8 路），268 个仓库约 90 秒，几十个仓库几秒钟。全程只读，没有副作用。
 
-命令行版是包里的另一个小程序 `gittracer-audit.exe`（console 程序，不弹窗口）：
+命令行版是包里的另一个小程序 `gittracer-audit`（console 程序，不弹窗口）。**0.9 起 Linux 和 macOS 也有份**——巡检核心不依赖 GUI 框架，所以 GitHub Actions 的 Linux runner、无界面的服务器都能跑；Releases 里有三平台的现成二进制：
 
 ```sh
-gittracer-audit --root D:\work --branch "main,release/*" --base main
+gittracer-audit --root D:\work --branch "main,release/*" --base main      # Windows
+gittracer-audit --root ~/work --branch "main,release/*" --base main       # Linux / macOS
 ```
 
 退出码 `0` 没有阻断项（可能带提示）、`1` 有阻断项、`2` 参数或目录有问题，所以 CI 里直接这么用：
@@ -149,7 +150,18 @@ gittracer-audit --root D:\work --branch "main,release/*" --base main
 - run: gittracer-audit --root . --branch "main,release/*" --fail-on error
 ```
 
-`--format text|md|json`、`--out 报告.md`、`--skip stash,unmerged` 都支持，`gittracer-audit --help` 看全量参数。它和界面一样只读：不 fetch、不写任何引用、不碰工作区。
+`--format text|md|json|sarif`、`--out 报告.md`、`--skip stash,unmerged` 都支持，`gittracer-audit --help` 看全量参数。`sarif` 是 GitHub Code scanning 的格式，配合 `github/codeql-action/upload-sarif` 能把巡检结果直接挂到仓库的 Security 标签页（本仓库的工作流已经在这么用）。它和界面一样只读：不 fetch、不写任何引用、不碰工作区。
+
+#### 基线：让门禁只盯新问题
+
+第一次接入的团队几乎都会撞上同一面墙：跑出来一片红，大半是「本来就这样」的老问题——全部修完才能让 CI 变绿？没人会答应。基线就是给这个场景的：
+
+```sh
+gittracer-audit . --format json --out baseline.json --fail-on never   # 第 1 步：把现状存成基线
+gittracer-audit . --baseline baseline.json                             # 第 2 步：从此只拦新增
+```
+
+带上 `--baseline` 之后，上一次报告里就有的问题标成「已知」，**不计入结论**；这次新冒出来的才决定退出码。报告里已知项照样列出来（挂着「已知」的说明），审计时一项不少——门禁盯新问题，账本记全部账。基线要更新时，把最新报告再存一份覆盖它就行。
 
 ### 把规则放进仓库
 
@@ -191,21 +203,15 @@ strict = true                  # 从工作区直接打包发版时打开：未�
 ```yaml
 jobs:
   audit:
-    uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.8.0
+    uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.9.0
     with:
       roots: '.'
       branch: 'main,release/*'
 ```
 
-它自己编译 `gittracer-audit`，不依赖已经发布的安装包；报告写进 job summary 并作为 artifact 留档，返回码非 0 就让 job 失败。输入项留空就吃仓库里的 `.gittracer.toml`：`depth`、允许分支、基准、跳过项都能写在文件里，工作流只负责跑。（`@v0.8.0` 是发版后的 tag，还没打就先写 `@main`。）不想在 CI 里编 Rust 的话，把「构建巡检程序」那步换成从 Releases 取现成的：
+它自己编译 `gittracer-audit`，不依赖已经发布的安装包；报告写进 job summary 并作为 artifact 留档，返回码非 0 就让 job 失败。输入项留空就吃仓库里的 `.gittracer.toml`：`depth`、允许分支、基准、跳过项都能写在文件里，工作流只负责跑。（`@v0.9.0` 是发版后的 tag，还没打就先写 `@main`。）不想在 CI 里编 Rust 的话，Releases 里有三个平台的现成 CLI（`gittracer-audit-linux-x64.tar.gz` / `macos-arm64.tar.gz`，Windows 的在 portable zip 里），取一份替掉「构建巡检程序」那步即可。
 
-```yaml
-- run: |
-    gh release download --repo haoguan2013/gittracer --pattern "GitTracer-*-portable.zip" --dir pkg
-    Expand-Archive (Get-ChildItem pkg/*.zip).FullName -DestinationPath pkg/bin
-  env:
-    GH_TOKEN: ${{ github.token }}
-```
+本仓库自己跑这个工作流时，还会顺手把 SARIF 版报告传到 Code scanning 标签页——巡检结果在仓库页就能看，不用点进日志找。别的仓库复用时不带这步（那边要 `security-events` 权限，由调用方自己决定）。
 
 两个坑写在前面：
 
@@ -249,7 +255,7 @@ jobs:
 
 ## 下载与安装
 
-到本仓库的 **Releases** 页面下载 `GitTracer-0.8.0-portable.zip`（仓库里不放二进制包，也可以按下面的命令自己生成）：
+到本仓库的 **Releases** 页面下载 `GitTracer-0.9.0-portable.zip`（仓库里不放二进制包，也可以按下面的命令自己生成）：
 
 | 方式 | 做法 | 说明 |
 | --- | --- | --- |
@@ -275,7 +281,7 @@ pnpm tauri build    # release exe + NSIS 安装包
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\make-package.ps1
 ```
 
-产物在 `src-tauri/target/release/git-tracer.exe`、同目录下的 `gittracer-audit.exe`，以及 `GitTracer-0.8.0-portable.zip`。`tools/` 里还有生成测试仓库的 `make-demo-data.ps1`、生成图标的 `make-icons.py`（纯标准库）、用 CDP 驱动界面截图的 `cdp.mjs`，以及录 README 动图的两步：`make-gif.mjs` 抓帧、`gif.py` 合成（这一步要 `pip install pillow`）。
+产物在 `src-tauri/target/release/git-tracer.exe`、同目录下的 `gittracer-audit.exe`，以及 `GitTracer-0.9.0-portable.zip`。`tools/` 里还有生成测试仓库的 `make-demo-data.ps1`、生成图标的 `make-icons.py`（纯标准库）、用 CDP 驱动界面截图的 `cdp.mjs`，以及录 README 动图的两步：`make-gif.mjs` 抓帧、`gif.py` 合成（这一步要 `pip install pillow`）。
 
 ### 项目怎么搭的
 
@@ -328,5 +334,21 @@ docs/                 截图 + 开发排障笔记 + 版本说明
 - **巡检不联网**：不跑 `git fetch`，所以「落后远程几个提交」用的是本地远程跟踪分支的旧值。想让它准，先在命令行 `git fetch --all`，或者靠近时手动拉一次。
 - **巡检不会替你修**：它只出结论（通过 / 注意 / 未通过），不自动提交、不自动推送，也没有 `--fix`。要修回界面里点。
 - **配置只能放宽，不能收紧**：`skip` 在多层配置之间只做并集，仓库里的 `.gittracer.toml` 没法把根目录已经跳过的规则重新打开。少拦一条比多拦一条危险，所以宁可让你去改更外层那份。
+
+## 商业版与私有部署
+
+先把话说死：**上面写的一切——巡检、基线、SARIF、命令行、配置文件——永远免费**，包括以后的新规则。它是门禁，门禁靠「大家敢默认用它」活着，收费就等于自杀。
+
+付费的是它「之上」的东西，目前按项目洽谈：
+
+| 场景 | 内容 | 说明 |
+| --- | --- | --- |
+| 团队策略集中管理 | 一处下发 `.gittracer.toml`，全团队生效；界面统一管理 | 多仓多人的规则目前散在各仓库里 |
+| 报告归档与对比 | 巡检历史、基线对比面板、发版单留痕 | 基线已有命令行版，面板化是付费层 |
+| 私有部署与定制规则 | 内网部署、按贵司交付规范定制规则、验收报告格式 | 适合交付 / 验收要留痕的团队 |
+
+咨询请邮件 **anderson@motiforce.com**（这个邮箱也是 git 提交历史里那个），说明团队规模和场景即可，一般 48 小时内回复。GitHub Sponsors 也在计划里。
+
+---
 
 完整版本记录、本机构建踩坑、`GIT_TRACER_DATA_DIR` 等环境变量说明，都在 [docs/DEV_NOTES.md](docs/DEV_NOTES.md)；本次发版的说明见 [docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md)。有想法或遇到问题，欢迎提 Issue / PR。

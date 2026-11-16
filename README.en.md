@@ -1,6 +1,6 @@
 # Git Tracer
 
-![Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6) ![Tauri 2 + Rust](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20Rust-DEA584) ![No build step](https://img.shields.io/badge/Frontend-HTML%20%2F%20CSS%20%2F%20JS-3178C6) ![v0.8.0](https://img.shields.io/badge/Version-0.8.0-2F81F7) ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue)
+![Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6) ![Tauri 2 + Rust](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20Rust-DEA584) ![No build step](https://img.shields.io/badge/Frontend-HTML%20%2F%20CSS%20%2F%20JS-3178C6) ![v0.8.0](https://img.shields.io/badge/Version-0.9.0-2F81F7) ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue)
 
 [中文](README.md) · **English**
 
@@ -124,10 +124,11 @@ One thing happens in the background: **it runs in parallel**. `git status` is a 
 
 ### Command line
 
-`gittracer-audit.exe` ships in the same zip — a console program, no window:
+`gittracer-audit` ships in the same zip — a console program, no window. **As of 0.9 it also runs on Linux and macOS**: the audit core has no GUI dependencies, so it works on GitHub Actions' Linux runners and headless servers. Prebuilt binaries for all three platforms are on the Releases page:
 
 ```sh
-gittracer-audit --root D:\work --branch "main,release/*" --base main
+gittracer-audit --root D:\work --branch "main,release/*" --base main      # Windows
+gittracer-audit --root ~/work --branch "main,release/*" --base main       # Linux / macOS
 ```
 
 Exit codes: `0` no blockers (warnings allowed), `1` blockers found, `2` bad arguments or paths. So in CI:
@@ -136,7 +137,18 @@ Exit codes: `0` no blockers (warnings allowed), `1` blockers found, `2` bad argu
 - run: gittracer-audit --root . --branch "main,release/*" --fail-on error
 ```
 
-`--format text|md|json`, `--out report.md`, `--skip stash,unmerged`, `--strict`, `--no-config` are supported; `gittracer-audit --help` lists everything. Like the GUI it is read-only: no fetch, no refs written, no working-tree changes.
+`--format text|md|json|sarif`, `--out report.md`, `--skip stash,unmerged`, `--strict`, `--no-config` are supported; `gittracer-audit --help` lists everything. `sarif` is the GitHub Code scanning format — feed it to `github/codeql-action/upload-sarif` and audit results show up on your repo's Security tab (this repository's workflow already does). Like the GUI it is read-only: no fetch, no refs written, no working-tree changes.
+
+### Baselines: gate on what's new
+
+Almost every team hits the same wall on day one: the first run comes back mostly red, and much of it is "it's always been like that". Nobody will sign up for "fix everything before CI goes green". That's what the baseline is for:
+
+```sh
+gittracer-audit . --format json --out baseline.json --fail-on never   # step 1: snapshot the status quo
+gittracer-audit . --baseline baseline.json                             # step 2: from now on, only new issues block
+```
+
+With `--baseline`, findings already present in the previous report are marked **known** and no longer count toward the verdict; only what's new decides the exit code. Known items still appear in the report (tagged as known) — the gate watches what's new, the ledger keeps everything. To refresh the baseline, just save the latest report over it.
 
 ## Put the rules in the repository
 
@@ -178,21 +190,15 @@ The repo ships a ready-made workflow, [`.github/workflows/audit.yml`](.github/wo
 ```yaml
 jobs:
   audit:
-    uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.8.0
+    uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.9.0
     with:
       roots: '.'
       branch: 'main,release/*'
 ```
 
-It builds `gittracer-audit` itself, so it doesn't depend on a published package; the report goes to the job summary and an artifact, and a non-zero exit fails the job. Leave inputs empty and it reads `.gittracer.toml` from the repo: `depth`, allowed branches, base, skips, strict — the workflow only runs it. (`@v0.8.0` assumes the tag exists; use `@main` before that.) If you'd rather not compile Rust in CI, swap the build step for the published zip:
+It builds `gittracer-audit` itself, so it doesn't depend on a published package; the report goes to the job summary and an artifact, and a non-zero exit fails the job. Leave inputs empty and it reads `.gittracer.toml` from the repo: `depth`, allowed branches, base, skips, strict — the workflow only runs it. (`@v0.9.0` assumes the tag exists; use `@main` before that.) If you'd rather not compile Rust in CI, the Releases page has prebuilt CLIs for all three platforms (`gittracer-audit-linux-x64.tar.gz`, `macos-arm64.tar.gz`; the Windows one is inside the portable zip) — swap the build step for a download.
 
-```yaml
-- run: |
-    gh release download --repo haoguan2013/gittracer --pattern "GitTracer-*-portable.zip" --dir pkg
-    Expand-Archive (Get-ChildItem pkg/*.zip).FullName -DestinationPath pkg/bin
-  env:
-    GH_TOKEN: ${{ github.token }}
-```
+When this repository runs the workflow on itself, it also uploads a SARIF copy to the Code scanning tab — audit results right on the repo page, no digging through logs. Reusable runs elsewhere skip that step (it needs `security-events` permission, which belongs to the caller).
 
 Two traps worth knowing:
 
@@ -236,7 +242,7 @@ Hard rules underneath: empty commit messages are rejected; **commits and diff pr
 
 ## Download and install
 
-Grab `GitTracer-0.8.0-portable.zip` from **Releases** (no binaries are committed to the repo; you can also build it yourself):
+Grab `GitTracer-0.9.0-portable.zip` from **Releases** (no binaries are committed to the repo; you can also build it yourself):
 
 | Option | How | Notes |
 | --- | --- | --- |
@@ -262,7 +268,7 @@ To produce the portable zip:
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\make-package.ps1
 ```
 
-Artifacts: `src-tauri/target/release/git-tracer.exe`, `gittracer-audit.exe` beside it, and `GitTracer-0.8.0-portable.zip`. `tools/` also holds `make-demo-data.ps1` (fake repositories for testing and screenshots), `make-icons.py` (stdlib only), `cdp.mjs` (drives the UI over CDP for screenshots), and the two-step GIF recorder: `make-gif.mjs` captures frames, `gif.py` assembles them (`pip install pillow` for that step).
+Artifacts: `src-tauri/target/release/git-tracer.exe`, `gittracer-audit.exe` beside it, and `GitTracer-0.9.0-portable.zip`. `tools/` also holds `make-demo-data.ps1` (fake repositories for testing and screenshots), `make-icons.py` (stdlib only), `cdp.mjs` (drives the UI over CDP for screenshots), and the two-step GIF recorder: `make-gif.mjs` captures frames, `gif.py` assembles them (`pip install pillow` for that step).
 
 ### Layout
 
@@ -306,7 +312,7 @@ Every git call uses `--no-optional-locks`, `core.quotepath=false`, `GIT_TERMINAL
 
 ## Boundaries, stated up front
 
-- **Windows only**: the folder picker uses PowerShell + WinForms and the console hiding is Windows-specific.
+- **The GUI is Windows-only** (folder picker via PowerShell + WinForms). **The CLI runs on Windows / Linux / macOS** — the audit core has no GUI dependencies.
 - **No live refresh**: press `F5` after changing things on disk; the app doesn't watch the filesystem.
 - **Commits don't span repositories**: one commit covers the ticked files of the current repo, no `--amend`, no hunk selection.
 - **Push covers the current branch only**: no force, no tags, no branching/merging/tagging.
@@ -317,6 +323,20 @@ Every git call uses `--no-optional-locks`, `core.quotepath=false`, `GIT_TERMINAL
 - **Config can only relax, not tighten**: `skip` is a union across layers, so a repo-level file can't re-enable a rule the root file already skipped. Missing a blocker is worse than an extra one, so the outer layer wins.
 
 Full release history, local build gotchas, and `GIT_TRACER_DATA_DIR` live in [docs/DEV_NOTES.md](docs/DEV_NOTES.md); this release is described in [docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md). Issues and PRs welcome.
+
+## Commercial & self-hosted
+
+Stated plainly first: **everything described above — the audit, baselines, SARIF, the CLI, config files — stays free forever**, including future rules. A gate only works if people dare to make it the default; charging for it would kill it.
+
+What's paid is what sits *on top* of it, currently negotiated per project:
+
+| Scenario | What you get | Status |
+| --- | --- | --- |
+| Team policy management | One place to distribute `.gittracer.toml`; managed via a dashboard | Rules currently live per-repo |
+| Report archive & diffing | Audit history, a baseline-comparison dashboard, release sign-off trails | The CLI baseline exists; the dashboard is the paid layer |
+| Self-hosted & custom rules | Intranet deployment, rules matching your delivery spec, acceptance-report format | For teams whose sign-offs must leave a trace |
+
+For inquiries email **anderson@motiforce.com** (same address as in the git history) with team size and your scenario; usually answered within 48 hours. GitHub Sponsors is planned.
 
 ## License
 
