@@ -302,6 +302,9 @@ docs/
 - **不缓存 cargo**：要缓存就得把 `CARGO_HOME` 指到 `$CI_PROJECT_DIR` 下，而那个目录里的
   `.cargo/` 会变成未跟踪改动——巡检第一件事就是报「工作区有活」（`--strict` 下直接阻断）。
   只编 core 一个 crate（serde + toml），冷启动几十秒，不值得换这个噪音。
+- **报告先写到项目外**：`--out` 指到 `$TMPDIR`，两遍都跑完再 `cp` 回项目目录给
+  `artifacts` 收。直接写在仓库根上的话，第二遍巡检会把第一遍刚生成的 `audit.md`
+  当成未跟踪改动——报告自己给自己添一条 `dirty`。`--strict` 的团队会直接被这条绊住。
 - **MR 基准**：`BASE=${AUDIT_BASE:-${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}}`，MR 流水线
   自动拿目标分支当 `--base`，比写死 `main` 准。
 - **测试**：新增 4 项（必填字段与级别、指纹稳定性与区分度、路径相对化、已知项标记）。

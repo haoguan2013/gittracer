@@ -49,6 +49,10 @@ gittracer-audit:
     - |
       set -eu
       EXE=src-tauri/target/release/gittracer-audit
+      # 报告先写到项目外面。写在仓库里的话，第二遍巡检会把第一遍的报告当成
+      # 「未跟踪改动」，报告自己给自己添一条 dirty。
+      OUT="${TMPDIR:-/tmp}/gittracer-audit"
+      mkdir -p "$OUT"
 
       cargo build --release --locked -p git-tracer-core --bin gittracer-audit \
         --manifest-path src-tauri/Cargo.toml
@@ -65,17 +69,23 @@ gittracer-audit:
       [ -n "$BASE" ]         && ARGS="$ARGS --base $BASE"
       [ -n "$AUDIT_SKIP" ]   && ARGS="$ARGS --skip $AUDIT_SKIP"
 
-      # 先跑人看的这份：无论成败都要留在日志里，失败的流水线更需要看是哪一条
+      # 第一遍出人看的报告，它的退出码就是门禁
       code=0
-      "$EXE" --root "$AUDIT_ROOT" $ARGS --format md --out audit.md \
+      "$EXE" --root "$AUDIT_ROOT" $ARGS --format md --out "$OUT/audit.md" \
         --fail-on "$FAIL_ON" || code=$?
+
+      # 第二遍出 Code Quality（半秒的事）。--fail-on never 是故意的：
+      # 这一步不该改变上一步的结论。
+      "$EXE" --root "$AUDIT_ROOT" $ARGS --format gitlab \
+        --out "$OUT/gl-code-quality-report.json" --fail-on never || true
+
+      # 搬到项目目录：artifacts 只收项目里的文件。巡检已经跑完，
+      # 这两份不会被算成未跟踪改动。
+      for f in audit.md gl-code-quality-report.json; do
+        if [ -f "$OUT/$f" ]; then cp "$OUT/$f" "$f"; fi
+      done
       # 参数错（退出码 2）时报告根本没生成，别让 cat 把真正的错因盖成"No such file"
       if [ -f audit.md ]; then cat audit.md; fi
-
-      # 再单独出一份 Code Quality（半秒的事）。--fail-on never 是故意的：
-      # 这一步不该改变上一次的结论，退出码已经由上面那次决定了。
-      "$EXE" --root "$AUDIT_ROOT" $ARGS --format gitlab \
-        --out gl-code-quality-report.json --fail-on never || true
 
       if [ "$code" -eq 2 ]; then
         echo "参数或环境错误，巡检没跑起来"
