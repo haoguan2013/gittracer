@@ -17,8 +17,6 @@ variables:
   # 必须全量：ahead / behind / branch --no-merged 都靠远程跟踪引用，
   # 浅克隆下这些数字全是 0，检查会静默变成"全部通过"。
   GIT_DEPTH: '0'
-  # 缓存 cargo 的 registry，省掉每次重新拉依赖
-  CARGO_HOME: '$CI_PROJECT_DIR/.cargo'
   # 巡检哪个目录。单仓库就是 "."，workspace 里想连带子仓库就改成 ".."
   AUDIT_ROOT: '.'
   # 留空 = 用 .gittracer.toml 里的值，再没有就用默认
@@ -39,11 +37,9 @@ gittracer-audit:
     - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
     - if: $CI_COMMIT_TAG =~ /^v/
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-  cache:
-    key: cargo-registry
-    paths:
-      - .cargo/registry/
-      - .cargo/git/
+  # 刻意不缓存 cargo：要缓存就得把 CARGO_HOME 指到 $CI_PROJECT_DIR 下，
+  # 而那个目录里的 .cargo/ 会变成未跟踪改动——巡检第一件事就是报「工作区有活」。
+  # 这里只编 core 一个 crate（serde + toml），冷启动也就几十秒，不值得换这个噪音。
   before_script:
     # 标签 / 合并检出都是分离 HEAD，默认 refspec 只带那一个 ref，仓库里没有
     # origin/main —— 基准分支检查（--base）会跟着一起失效。对象本来就在本地，

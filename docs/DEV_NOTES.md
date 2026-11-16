@@ -299,6 +299,9 @@ docs/
   GitHub 版同一条教训。脚本里 `set -eu` 与 `[ -n "$X" ] && ARGS="$ARGS ..."` 的组合是安全的：
   `-e` 不作用于 AND 列表中非末尾的命令。`cat audit.md` 前面加了 `[ -f ]` 判断——退出码 2
   （参数错）时报告根本没生成，裸 `cat` 会把真正的错因盖成 "No such file"。
+- **不缓存 cargo**：要缓存就得把  指到  下，而那个目录里的
+   会变成未跟踪改动——巡检第一件事就是报「工作区有活」（ 下直接阻断）。
+  只编 core 一个 crate（serde + toml），冷启动几十秒，不值得换这个噪音。
 - **MR 基准**：`BASE=${AUDIT_BASE:-${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}}`，MR 流水线
   自动拿目标分支当 `--base`，比写死 `main` 准。
 - **测试**：新增 4 项（必填字段与级别、指纹稳定性与区分度、路径相对化、已知项标记）。
