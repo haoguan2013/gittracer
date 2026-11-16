@@ -336,7 +336,7 @@ What's paid is what sits *on top* of it, currently negotiated per project:
 | Report archive & diffing | Audit history, a baseline-comparison dashboard, release sign-off trails | The CLI baseline exists; the dashboard is the paid layer |
 | Self-hosted & custom rules | Intranet deployment, rules matching your delivery spec, acceptance-report format | For teams whose sign-offs must leave a trace |
 
-For inquiries email **anderson@motiforce.com** (same address as in the git history) with team size and your scenario; usually answered within 48 hours. GitHub Sponsors is planned.
+For inquiries email **erickwanyork@gmail.com** (same address as in the git history) with team size and your scenario; usually answered within 48 hours. GitHub Sponsors is planned.
 
 ## License
 
