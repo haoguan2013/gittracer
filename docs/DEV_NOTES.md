@@ -302,6 +302,19 @@ docs/
   （用的是 git 历史里已有的 anderson@motiforce.com，没有暴露新信息）。
 - **portable GUI zip 仍手动出**：make-package.ps1 依赖 tools/ 里未入库的文件（install.ps1、
   安装.cmd 等），CI 复刻不了；tools/ 是否入库这个悬而未决的问题继续留着。
+- **v0.9.0 首发验证**（打 tag 后实测）：两个工作流都绿；`build.yml` 三平台各出一份 CLI 并挂到
+  Release（linux 430KB / macos 394KB / windows 345KB），Windows 那份解出来 `--version` 是 0.9.0；
+  `audit.yml` 在 Code scanning 里留下一次分析（14 条规则 / 2 条结果），报告与 SARIF 都进了 artifact。
+  portable zip 用 `tools/make-package.ps1` 本地出（1.76MB）后手动补传，Release 正文按
+  `docs/RELEASE_NOTES.md` 的 0.9.0 段补写（action-gh-release 不会自动填 body，只挂文件）。
+  两点值得记住：
+  1. `Compress-Archive` 打出来的中文名（使用说明.txt / 安装.cmd）在 zip 里**带** UTF-8 标记，
+     Windows 资源管理器与 `Expand-Archive` 解出来名字正常；只有 MSYS 那套 `unzip` 会按 ANSI
+     解成乱码，别据此判定包坏了。
+  2. tag 检出是 detached HEAD，CI 里没有本地 `main`，于是 `.gittracer.toml` 的 `base = "main"`
+     落到「基准分支不存在，本条未生效」（Warn 提示，不影响退出码）。`resolve_base` 目前只认
+     `rev-parse` 能解析的名字，没有回退到 `origin/main`；要让这条在 CI 上真正生效，得让它
+     回退到远程跟踪引用，或让工作流显式 `git fetch origin +refs/heads/*:refs/remotes/origin/*`。
 
 **0.8.0**
 
