@@ -196,7 +196,7 @@ jobs:
       branch: 'main,release/*'
 ```
 
-It builds `gittracer-audit` itself, so it doesn't depend on a published package; the report goes to the job summary and an artifact, and a non-zero exit fails the job. Leave inputs empty and it reads `.gittracer.toml` from the repo: `depth`, allowed branches, base, skips, strict — the workflow only runs it. (`@v0.9.0` assumes the tag exists; use `@main` before that.) If you'd rather not compile Rust in CI, the Releases page has prebuilt CLIs for all three platforms (`gittracer-audit-linux-x64.tar.gz`, `macos-arm64.tar.gz`; the Windows one is inside the portable zip) — swap the build step for a download.
+It builds `gittracer-audit` itself, so it doesn't depend on a published package; the report goes to the job summary and an artifact, and a non-zero exit fails the job. Leave inputs empty and it reads `.gittracer.toml` from the repo: `depth`, allowed branches, base, skips, strict — the workflow only runs it. (`@v0.9.0` assumes the tag exists; use `@main` before that.) If you'd rather not compile Rust in CI, the Releases page has prebuilt CLIs for all three platforms (`gittracer-audit-linux-x64.tar.gz`, `gittracer-audit-macos-arm64.tar.gz`, `gittracer-audit-windows-x64.zip`) — swap the build step for a download.
 
 When this repository runs the workflow on itself, it also uploads a SARIF copy to the Code scanning tab — audit results right on the repo page, no digging through logs. Reusable runs elsewhere skip that step (it needs `security-events` permission, which belongs to the caller).
 

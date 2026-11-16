@@ -209,7 +209,7 @@ jobs:
       branch: 'main,release/*'
 ```
 
-它自己编译 `gittracer-audit`，不依赖已经发布的安装包；报告写进 job summary 并作为 artifact 留档，返回码非 0 就让 job 失败。输入项留空就吃仓库里的 `.gittracer.toml`：`depth`、允许分支、基准、跳过项都能写在文件里，工作流只负责跑。（`@v0.9.0` 是发版后的 tag，还没打就先写 `@main`。）不想在 CI 里编 Rust 的话，Releases 里有三个平台的现成 CLI（`gittracer-audit-linux-x64.tar.gz` / `macos-arm64.tar.gz`，Windows 的在 portable zip 里），取一份替掉「构建巡检程序」那步即可。
+它自己编译 `gittracer-audit`，不依赖已经发布的安装包；报告写进 job summary 并作为 artifact 留档，返回码非 0 就让 job 失败。输入项留空就吃仓库里的 `.gittracer.toml`：`depth`、允许分支、基准、跳过项都能写在文件里，工作流只负责跑。（`@v0.9.0` 是发版后的 tag，还没打就先写 `@main`。）不想在 CI 里编 Rust 的话，Releases 里有三个平台的现成 CLI（`gittracer-audit-linux-x64.tar.gz` / `gittracer-audit-macos-arm64.tar.gz` / `gittracer-audit-windows-x64.zip`），取一份替掉「构建巡检程序」那步即可。
 
 本仓库自己跑这个工作流时，还会顺手把 SARIF 版报告传到 Code scanning 标签页——巡检结果在仓库页就能看，不用点进日志找。别的仓库复用时不带这步（那边要 `security-events` 权限，由调用方自己决定）。
 
