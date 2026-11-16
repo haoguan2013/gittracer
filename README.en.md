@@ -1,6 +1,6 @@
 # Git Tracer
 
-![Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6) ![Tauri 2 + Rust](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20Rust-DEA584) ![No build step](https://img.shields.io/badge/Frontend-HTML%20%2F%20CSS%20%2F%20JS-3178C6) ![v0.9.1](https://img.shields.io/badge/Version-0.9.1-2F81F7) ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue)
+![Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6) ![Tauri 2 + Rust](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20Rust-DEA584) ![No build step](https://img.shields.io/badge/Frontend-HTML%20%2F%20CSS%20%2F%20JS-3178C6) ![v0.10.0](https://img.shields.io/badge/Version-0.10.0-2F81F7) ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue)
 
 [中文](README.md) · **English**
 
@@ -81,6 +81,19 @@ The palette is dashboard/terminal: dark blue-black, thin cyan lines, blue select
 
 Root directories, scan depth, filter toggles, and the active tab are stored locally and restored next time.
 
+### Chinese and English
+
+There's a language button just left of **Rescan**: it reads `EN` in the Chinese UI and `中文` in the English one, and one click swaps the whole interface — repo badges, file groups, diff notices, the commit / push / pull confirmations, the reset dialog, the audit panel and its full verdict, the status bar. Not just a handful of buttons. The first launch follows the system language (Chinese on a Chinese system, English everywhere else); once you pick one it's remembered locally.
+
+The command line follows the same rules, including the report body, `--help` and error messages:
+
+```sh
+gittracer-audit --lang en          # explicit
+GITTRACER_LANG=en gittracer-audit .   # or via the environment
+```
+
+Precedence: `--lang` > `GITTRACER_LANG` > `LC_ALL` / `LC_MESSAGES` / `LANG` > Chinese. The report JSON keeps the same field names and values regardless of language — if a machine reads it, read the JSON.
+
 ## Audit before you ship
 
 Click **Audit** in the top right. It doesn't ask what changed; it answers one question: **can these repositories be released right now?**
@@ -137,7 +150,7 @@ Exit codes: `0` no blockers (warnings allowed), `1` blockers found, `2` bad argu
 - run: gittracer-audit --root . --branch "main,release/*" --fail-on error
 ```
 
-`--format text|md|json|sarif`, `--out report.md`, `--skip stash,unmerged`, `--strict`, `--no-config` are supported; `gittracer-audit --help` lists everything. `sarif` is the GitHub Code scanning format — feed it to `github/codeql-action/upload-sarif` and audit results show up on your repo's Security tab (this repository's workflow already does). Like the GUI it is read-only: no fetch, no refs written, no working-tree changes.
+`--format text|md|json|sarif`, `--out report.md`, `--skip stash,unmerged`, `--strict`, `--no-config`, `--lang zh|en` are supported; `gittracer-audit --help` lists everything. `sarif` is the GitHub Code scanning format — feed it to `github/codeql-action/upload-sarif` and audit results show up on your repo's Security tab (this repository's workflow already does). Like the GUI it is read-only: no fetch, no refs written, no working-tree changes.
 
 ### Baselines: gate on what's new
 
@@ -190,13 +203,13 @@ The repo ships a ready-made workflow, [`.github/workflows/audit.yml`](.github/wo
 ```yaml
 jobs:
   audit:
-    uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.9.1
+    uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.10.0
     with:
       roots: '.'
       branch: 'main,release/*'
 ```
 
-It builds `gittracer-audit` itself, so it doesn't depend on a published package; the report goes to the job summary and an artifact, and a non-zero exit fails the job. Leave inputs empty and it reads `.gittracer.toml` from the repo: `depth`, allowed branches, base, skips, strict — the workflow only runs it. (`@v0.9.1` assumes the tag exists; use `@main` before that.) If you'd rather not compile Rust in CI, the Releases page has prebuilt CLIs for all three platforms (`gittracer-audit-linux-x64.tar.gz`, `gittracer-audit-macos-arm64.tar.gz`, `gittracer-audit-windows-x64.zip`) — swap the build step for a download.
+It builds `gittracer-audit` itself, so it doesn't depend on a published package; the report goes to the job summary and an artifact, and a non-zero exit fails the job. Leave inputs empty and it reads `.gittracer.toml` from the repo: `depth`, allowed branches, base, skips, strict — the workflow only runs it. (`@v0.10.0` assumes the tag exists; use `@main` before that.) If you'd rather not compile Rust in CI, the Releases page has prebuilt CLIs for all three platforms (`gittracer-audit-linux-x64.tar.gz`, `gittracer-audit-macos-arm64.tar.gz`, `gittracer-audit-windows-x64.zip`) — swap the build step for a download.
 
 When this repository runs the workflow on itself, it also uploads a SARIF copy to the Code scanning tab — audit results right on the repo page, no digging through logs. Reusable runs elsewhere skip that step (it needs `security-events` permission, which belongs to the caller).
 
@@ -242,7 +255,7 @@ Hard rules underneath: empty commit messages are rejected; **commits and diff pr
 
 ## Download and install
 
-Grab `GitTracer-0.9.1-portable.zip` from **Releases** (no binaries are committed to the repo; you can also build it yourself):
+Grab `GitTracer-0.10.0-portable.zip` from **Releases** (no binaries are committed to the repo; you can also build it yourself):
 
 | Option | How | Notes |
 | --- | --- | --- |
@@ -268,7 +281,7 @@ To produce the portable zip:
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\make-package.ps1
 ```
 
-Artifacts: `src-tauri/target/release/git-tracer.exe`, `gittracer-audit.exe` beside it, and `GitTracer-0.9.1-portable.zip`. `tools/` also holds `make-demo-data.ps1` (fake repositories for testing and screenshots), `make-icons.py` (stdlib only), `cdp.mjs` (drives the UI over CDP for screenshots), and the two-step GIF recorder: `make-gif.mjs` captures frames, `gif.py` assembles them (`pip install pillow` for that step).
+Artifacts: `src-tauri/target/release/git-tracer.exe`, `gittracer-audit.exe` beside it, and `GitTracer-0.10.0-portable.zip`. `tools/` also holds `make-demo-data.ps1` (fake repositories for testing and screenshots), `make-icons.py` (stdlib only), `cdp.mjs` (drives the UI over CDP for screenshots), and the two-step GIF recorder: `make-gif.mjs` captures frames, `gif.py` assembles them (`pip install pillow` for that step).
 
 ### Layout
 

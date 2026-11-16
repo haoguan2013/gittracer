@@ -103,7 +103,14 @@ pub fn pick_folder(desc: &str, initial_dir: &str) -> Result<Option<String>, Stri
         bytes.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
         bytes.extend_from_slice(text.as_bytes());
         std::fs::write(&script_path, &bytes)
-            .map_err(|e| format!("无法写入临时脚本 {}：{e}", script_path.display()))?;
+            .map_err(|e| {
+                git_tracer_core::tr!(
+                    "无法写入临时脚本 {p}：{e}",
+                    "Cannot write the temporary script {p}: {e}",
+                    p = script_path.display(),
+                    e = e
+                )
+            })?;
 
         let mut cmd = Command::new("powershell");
         cmd.args([
@@ -117,7 +124,13 @@ pub fn pick_folder(desc: &str, initial_dir: &str) -> Result<Option<String>, Stri
         cmd.arg(&script_path);
         // 不隐藏的话，每点一次「浏览」都会闪一个控制台窗口
         hide_console(&mut cmd);
-        let output = cmd.output().map_err(|e| format!("无法打开系统对话框：{e}"))?;
+        let output = cmd.output().map_err(|e| {
+            git_tracer_core::tr!(
+                "无法打开系统对话框：{e}",
+                "Cannot open the system dialog: {e}",
+                e = e
+            )
+        })?;
 
         let raw = std::fs::read_to_string(&out_path).unwrap_or_default();
         let _ = std::fs::remove_file(&out_path);
@@ -125,7 +138,11 @@ pub fn pick_folder(desc: &str, initial_dir: &str) -> Result<Option<String>, Stri
         let picked = raw.trim().to_string();
 
         if let Some(msg) = picked.strip_prefix("ERR:") {
-            return Err(format!("系统对话框失败：{}", msg.trim()));
+            return Err(git_tracer_core::tr!(
+                "系统对话框失败：{msg}",
+                "The system dialog failed: {msg}",
+                msg = msg.trim()
+            ));
         }
         if !picked.is_empty() {
             return Ok(Some(picked));
@@ -136,13 +153,21 @@ pub fn pick_folder(desc: &str, initial_dir: &str) -> Result<Option<String>, Stri
         if stderr.is_empty() {
             Ok(None)
         } else {
-            Err(format!("系统对话框失败：{stderr}"))
+            Err(git_tracer_core::tr!(
+                "系统对话框失败：{msg}",
+                "The system dialog failed: {msg}",
+                msg = stderr
+            ))
         }
     }
     #[cfg(not(windows))]
     {
         let _ = (desc, initial_dir);
-        Err("当前平台不支持系统文件夹对话框，请直接输入路径".to_string())
+        Err(git_tracer_core::i18n::t(
+            "当前平台不支持系统文件夹对话框，请直接输入路径",
+            "This platform has no native folder picker; type the path instead",
+        )
+        .to_string())
     }
 }
 
@@ -165,7 +190,13 @@ pub fn reveal(path: &str) -> Result<(), String> {
     }
     hide_console(&mut cmd);
     // explorer 成功时也可能返回非 0，这里不等它，直接认为已触发
-    cmd.spawn().map(|_| ()).map_err(|e| format!("无法打开资源管理器：{e}"))
+    cmd.spawn().map(|_| ()).map_err(|e| {
+        git_tracer_core::tr!(
+            "无法打开资源管理器：{e}",
+            "Cannot open the file manager: {e}",
+            e = e
+        )
+    })
 }
 
 #[cfg(test)]

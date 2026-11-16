@@ -208,7 +208,7 @@ impl RepoAudit {
             .filter(|f| f.scope == Scope::Workspace)
             .map(|f| f.message.clone())
             .collect::<Vec<_>>()
-            .join("；")
+            .join(crate::i18n::t("；", "; "))
     }
 }
 
@@ -228,9 +228,9 @@ pub enum Verdict {
 impl Verdict {
     pub fn word(self) -> &'static str {
         match self {
-            Verdict::Passed => "通过",
-            Verdict::Attention => "注意",
-            Verdict::Blocked => "未通过",
+            Verdict::Passed => crate::i18n::t("通过", "Passed"),
+            Verdict::Attention => crate::i18n::t("注意", "Attention"),
+            Verdict::Blocked => crate::i18n::t("未通过", "Blocked"),
         }
     }
 }
@@ -306,7 +306,7 @@ impl Report {
 pub fn run(opts: &Options) -> Result<Report, String> {
     let started = Instant::now();
     if opts.roots.is_empty() {
-        return Err("没有指定要巡检的根目录".to_string());
+        return Err(crate::i18n::t("没有指定要巡检的根目录", "No root directory given").to_string());
     }
     validate(opts)?;
 
@@ -314,11 +314,11 @@ pub fn run(opts: &Options) -> Result<Report, String> {
     let mut root_errors: Vec<String> = Vec::new();
     for r in &opts.roots {
         if !r.exists() {
-            root_errors.push(format!("{}：目录不存在", r.display()));
+            root_errors.push(crate::tr!("{p}：目录不存在", "{p}: no such directory", p = r.display()));
             continue;
         }
         if !r.is_dir() {
-            root_errors.push(format!("{}：不是一个目录", r.display()));
+            root_errors.push(crate::tr!("{p}：不是一个目录", "{p}: not a directory", p = r.display()));
             continue;
         }
         let cfg = if opts.use_config {
@@ -334,7 +334,7 @@ pub fn run(opts: &Options) -> Result<Report, String> {
     // 一个能用的都没有就没必要往下跑了：继续跑会生成一份「0 个仓库、结论通过」
     // 的报告，那比直接报错危险得多。
     if roots.is_empty() {
-        return Err(root_errors.join("；"));
+        return Err(root_errors.join(crate::i18n::t("；", "; ")));
     }
 
     let mut config_files: Vec<String> = Vec::new();
@@ -392,9 +392,10 @@ pub fn run(opts: &Options) -> Result<Report, String> {
                         // 仓库里写了不认它，但也不能装作没看见：这多半是同一个文件
                         // 被当成根目录配置在别处用，说清楚就行，不必让整个仓库不过。
                         if c.depth.is_some() {
-                            note = Some(format!(
-                                "{} 里的 depth 在这里不生效（它只管从根目录往下找几层），其余设置照常",
-                                p.display()
+                            note = Some(crate::tr!(
+                                "{file} 里的 depth 在这里不生效（它只管从根目录往下找几层），其余设置照常",
+                                "depth in {file} is ignored here (it only sets how deep to search from a root); everything else still applies",
+                                file = p.display()
                             ));
                         }
                         note_config(&mut config_files, &c.display());
@@ -632,7 +633,7 @@ fn apply_baseline(repos: &mut [RepoAudit], set: &HashSet<String>) -> (usize, usi
 /// 不许静默当「没有基线」跑——那等于门禁悄悄变松。
 pub fn load_baseline(text: &str) -> Result<HashSet<String>, String> {
     let report: Report = serde_json::from_str(text)
-        .map_err(|e| format!("基线文件不是有效的巡检报告 JSON：{e}"))?;
+        .map_err(|e| crate::tr!("基线文件不是有效的巡检报告 JSON：{e}", "baseline file is not a valid audit report JSON: {e}", e = e))?;
     let mut set = HashSet::new();
     for repo in &report.repos {
         let rk = path_key(&repo.path);
@@ -685,7 +686,11 @@ fn audit_repo(
             "config-error",
             Severity::Error,
             Scope::Release,
-            "仓库级配置读不了，这条仓库按上一层规则跑的，结论不可信".to_string(),
+            crate::i18n::t(
+                "仓库级配置读不了，这条仓库按上一层规则跑的，结论不可信",
+                "The repo-level config could not be read; this repo ran with the inherited rules, so the verdict is unreliable",
+            )
+            .to_string(),
         ).with_detail(Some(broken.clone())));
     }
 
@@ -696,7 +701,7 @@ fn audit_repo(
                 "read-error",
                 Severity::Error,
                 Scope::Release,
-                format!("读不到仓库状态：{e}"),
+                crate::tr!("读不到仓库状态：{e}", "Cannot read repository status: {e}", e = e),
             ));
         }
         Ok(st) => {
@@ -708,7 +713,7 @@ fn audit_repo(
                     "conflict",
                     Severity::Error,
                     Scope::Release,
-                    format!("有 {} 个文件处于冲突状态", st.conflicted),
+                    crate::tr!("有 {n} 个文件处于冲突状态", "{n} file(s) left in conflict", n = st.conflicted),
                 ));
             }
 
@@ -719,7 +724,7 @@ fn audit_repo(
                         "operation",
                         Severity::Error,
                         Scope::Release,
-                        format!("{op} 还没做完，仓库停在中途状态"),
+                        crate::tr!("{op} 还没做完，仓库停在中途状态", "{op} is unfinished; the repo is stuck mid-operation", op = op),
                     ));
                 }
             }
@@ -734,9 +739,13 @@ fn audit_repo(
                         "dirty",
                         dirty_sev,
                         Scope::Workspace,
-                        format!(
-                            "有 {dirty} 处未提交改动（{} 暂存 / {} 未暂存 / {} 未跟踪）",
-                            st.staged, st.unstaged, st.untracked
+                        crate::tr!(
+                            "有 {dirty} 处未提交改动（{staged} 暂存 / {unstaged} 未暂存 / {untracked} 未跟踪）",
+                            "{dirty} uncommitted change(s) ({staged} staged / {unstaged} unstaged / {untracked} untracked)",
+                            dirty = dirty,
+                            staged = st.staged,
+                            unstaged = st.unstaged,
+                            untracked = st.untracked
                         ),
                     )
                     .with_detail(sample_paths(&st)),
@@ -749,21 +758,24 @@ fn audit_repo(
                     "detached",
                     Severity::Error,
                     Scope::Release,
-                    "HEAD 已分离，不在任何分支上".to_string(),
+                    crate::i18n::t("HEAD 已分离，不在任何分支上", "HEAD is detached; not on any branch").to_string(),
                 ));
             }
 
             // 5. 未推送
             if st.ahead > 0 && !rules.skipped("unpushed") {
-                let up = st.upstream.clone().unwrap_or_else(|| "上游".to_string());
+                let up = st.upstream.clone().unwrap_or_else(|| crate::i18n::t("上游", "upstream").to_string());
                 findings.push(
                     Finding::new(
                         "unpushed",
                         Severity::Error,
                         Scope::Release,
-                        format!("有 {} 个提交还没推到 {up}", st.ahead),
+                        crate::tr!("有 {n} 个提交还没推到 {up}", "{n} commit(s) not pushed to {up}", n = st.ahead, up = up),
                     )
-                    .with_detail(Some("别人拿到的代码里没有这些提交".to_string())),
+                    .with_detail(Some(crate::i18n::t(
+                        "别人拿到的代码里没有这些提交",
+                        "Anyone else's copy is missing these commits",
+                    ).to_string())),
                 );
             }
 
@@ -773,7 +785,7 @@ fn audit_repo(
                     "behind",
                     Severity::Warn,
                     Scope::Workspace,
-                    format!("落后远程 {} 个提交", st.behind),
+                    crate::tr!("落后远程 {n} 个提交", "{n} commit(s) behind the remote", n = st.behind),
                 ));
             }
 
@@ -783,7 +795,7 @@ fn audit_repo(
                     "no-upstream",
                     Severity::Warn,
                     Scope::Workspace,
-                    "当前分支没有上游分支".to_string(),
+                    crate::i18n::t("当前分支没有上游分支", "Current branch has no upstream").to_string(),
                 ));
             }
 
@@ -793,7 +805,7 @@ fn audit_repo(
                     "stash",
                     Severity::Warn,
                     Scope::Workspace,
-                    format!("有 {} 条 stash 没清理", st.stashes),
+                    crate::tr!("有 {n} 条 stash 没清理", "{n} stash entries left behind", n = st.stashes),
                 ));
             }
 
@@ -805,9 +817,11 @@ fn audit_repo(
                             "branch",
                             Severity::Error,
                             Scope::Release,
-                            format!(
-                                "当前分支 {b} 不在允许列表里（允许：{}）",
-                                rules.branch_allow.join(" / ")
+                            crate::tr!(
+                                "当前分支 {b} 不在允许列表里（允许：{allow}）",
+                                "Current branch {b} is not in the allow list (allowed: {allow})",
+                                b = b,
+                                allow = rules.branch_allow.join(" / ")
                             ),
                         ));
                     }
@@ -827,7 +841,7 @@ fn audit_repo(
                     "no-remote",
                     Severity::Info,
                     Scope::Release,
-                    "没有配置远程仓库".to_string(),
+                    crate::i18n::t("没有配置远程仓库", "No remote configured").to_string(),
                 ));
             }
         }
@@ -855,9 +869,14 @@ fn sample_paths(st: &git::RepoStatus) -> Option<String> {
     }
     let mut names: Vec<String> = st.entries.iter().take(3).map(|e| e.path.clone()).collect();
     if st.entries.len() > 3 {
-        names.push(format!("…等 {} 个", st.entries.len()));
+        // 已经列了 3 个，剩下的是「还有几个」，别把总数写成剩余数
+        names.push(crate::tr!(
+            "…等 {n} 个",
+            "…and {n} more",
+            n = st.entries.len() - 3
+        ));
     }
-    Some(names.join("、"))
+    Some(names.join(crate::i18n::t("、", ", ")))
 }
 
 /* ---------------------------------------------------------------- 仓库内部状态 */
@@ -953,7 +972,7 @@ fn unmerged_finding(repo: &Path, prefer: Option<&str>, current: Option<&str>) ->
                     "unmerged",
                     Severity::Warn,
                     Scope::Workspace,
-                    format!("基准分支 {b} 在本地和 origin 下都不存在，本条未生效"),
+                    crate::tr!("基准分支 {b} 在本地和 origin 下都不存在，本条未生效", "Base branch {b} exists neither locally nor on origin; this rule did not run", b = b),
                 )
             })
         }
@@ -968,7 +987,7 @@ fn unmerged_finding(repo: &Path, prefer: Option<&str>, current: Option<&str>) ->
                 "unmerged",
                 Severity::Warn,
                 Scope::Workspace,
-                format!("查不到未合并分支：{}", clip(&e, 120)),
+                crate::tr!("查不到未合并分支：{e}", "Cannot list unmerged branches: {e}", e = clip(&e, 120)),
             ))
         }
     };
@@ -982,14 +1001,18 @@ fn unmerged_finding(repo: &Path, prefer: Option<&str>, current: Option<&str>) ->
     }
     let mut shown: Vec<String> = rest.iter().take(5).cloned().collect();
     if rest.len() > 5 {
-        shown.push(format!("…等 {} 个", rest.len()));
+        shown.push(crate::tr!(
+            "…等 {n} 个",
+            "…and {n} more",
+            n = rest.len() - 5
+        ));
     }
     Some(
         Finding::new(
             "unmerged",
             Severity::Warn,
             Scope::Workspace,
-            format!("有 {} 个本地分支没合并进 {base}", rest.len()),
+            crate::tr!("有 {n} 个本地分支没合并进 {base}", "{n} local branch(es) not merged into {base}", n = rest.len(), base = base),
         )
         .with_detail(Some(shown.join("、"))),
     )
@@ -1055,7 +1078,13 @@ pub fn render_sarif(report: &Report) -> String {
             };
             // message 里带上仓库和分支：code scanning 列表页只显示 message，
             // 不带仓库名的话「3 条 dirty」分不清是谁家的。
-            let mut text = format!("{} · 仓库 {}@{}", f.message, repo.name, repo.branch.as_deref().unwrap_or("detached"));
+            let mut text = crate::tr!(
+                "{msg} · 仓库 {repo}@{branch}",
+                "{msg} · repo {repo}@{branch}",
+                msg = f.message,
+                repo = repo.name,
+                branch = repo.branch.as_deref().unwrap_or("detached")
+            );
             if let Some(d) = &f.detail {
                 text.push_str(&format!(" · {d}"));
             }
@@ -1110,61 +1139,96 @@ pub fn render_sarif(report: &Report) -> String {
 
 pub fn render_text(report: &Report) -> String {
     let mut out = String::new();
-    out.push_str(&format!("Git Tracer 巡检  {}\n", report.generated_at));
-    out.push_str(&format!("根目录  {}\n", report.roots.join("；")));
-    out.push_str(&format!("深度    {}\n", report.depth));
-    out.push_str(&format!("基准    {}\n", base_text(report)));
-    out.push_str(&format!("模式    {}\n", mode_text(report)));
+    let sep = crate::i18n::t("；", "; ");
+    out.push_str(&crate::tr!(
+        "Git Tracer 巡检  {ts}",
+        "Git Tracer audit  {ts}",
+        ts = report.generated_at
+    ));
+    out.push('\n');
+    out.push_str(&crate::tr!(
+        "根目录  {v}",
+        "roots   {v}",
+        v = report.roots.join(sep)
+    ));
+    out.push('\n');
+    out.push_str(&crate::tr!("深度    {v}", "depth   {v}", v = report.depth));
+    out.push('\n');
+    out.push_str(&crate::tr!("基准    {v}", "base    {v}", v = base_text(report)));
+    out.push('\n');
+    out.push_str(&crate::tr!("模式    {v}", "mode    {v}", v = mode_text(report)));
+    out.push('\n');
     if let Some(b) = &report.baseline_file {
-        out.push_str(&format!(
-            "基线    {b}（已知项不计入结论，只盯新问题）\n"
+        out.push_str(&crate::tr!(
+            "基线    {b}（已知项不计入结论，只盯新问题）",
+            "baseline {b}  (known issues are listed but not counted; the gate watches new ones)",
+            b = b
         ));
+        out.push('\n');
     }
     // 用不了的根目录放在最前面说：它会让整份报告缺东西，不能藏在结尾
     for e in &report.root_errors {
-        out.push_str(&format!("不可用  {e}（已跳过，其余照常）\n"));
+        out.push_str(&crate::tr!(
+            "不可用  {e}（已跳过，其余照常）",
+            "unusable {e}  (skipped, everything else still ran)",
+            e = e
+        ));
+        out.push('\n');
     }
     if !report.branch_allow.is_empty() {
-        out.push_str(&format!("允许分支  {}\n", report.branch_allow.join(" / ")));
+        out.push_str(&crate::tr!(
+            "允许分支  {v}",
+            "branches {v}",
+            v = report.branch_allow.join(" / ")
+        ));
+        out.push('\n');
     }
     if !report.skipped.is_empty() {
-        out.push_str(&format!("跳过规则  {}\n", report.skipped.join(", ")));
+        out.push_str(&crate::tr!(
+            "跳过规则  {v}",
+            "skipped  {v}",
+            v = report.skipped.join(", ")
+        ));
+        out.push('\n');
     }
     if !report.config_files.is_empty() {
-        out.push_str(&format!(
-            "配置      {} 个 .gittracer.toml\n",
-            report.config_files.len()
+        out.push_str(&crate::tr!(
+            "配置      {n} 个 .gittracer.toml",
+            "config   {n} .gittracer.toml file(s)",
+            n = report.config_files.len()
         ));
+        out.push('\n');
     }
     out.push('\n');
 
     if report.repos.is_empty() {
-        out.push_str("没有找到任何 Git 仓库。\n");
+        out.push_str(crate::i18n::t(
+            "没有找到任何 Git 仓库。\n",
+            "No Git repositories found.\n",
+        ));
     }
 
     for repo in &report.repos {
         let mark = if repo.failed() { "FAIL" } else { "PASS" };
         let branch = repo.branch.as_deref().unwrap_or("(detached)");
-        out.push_str(&format!(
-            "{}  {}  <{}>\n",
-            mark,
-            pad(&repo.name, 26),
-            branch
-        ));
+        out.push_str(&format!("{}  {}  <{}>\n", mark, pad(&repo.name, 26), branch));
         // 只在这个仓库和全局默认不一样时才单独列，否则 200 个仓库全在刷同一行
         if let Some(c) = &repo.config {
-            out.push_str(&format!("      配置    {c}\n"));
+            out.push_str(&crate::tr!("      配置    {c}", "      config  {c}", c = c));
+            out.push('\n');
         }
         if !same_skip(&repo.effective_skip, &report.skipped) {
-            out.push_str(&format!(
-                "      跳过    {}\n",
-                repo.effective_skip.join(", ")
+            out.push_str(&crate::tr!(
+                "      跳过    {v}",
+                "      skip    {v}",
+                v = repo.effective_skip.join(", ")
             ));
+            out.push('\n');
         }
         for f in &repo.findings {
             // 已知项不藏起来，只是挂上说明：门禁盯新问题，审计要看到全部
             let known = if f.baseline == Some(BaselineState::Known) {
-                "（已知）"
+                crate::i18n::t("（已知）", " (known)")
             } else {
                 ""
             };
@@ -1182,37 +1246,44 @@ pub fn render_text(report: &Report) -> String {
     }
 
     let t = &report.totals;
-    out.push_str(&format!(
-        "{} 个仓库：{} 未通过 / {} 通过 · {} 阻断 / {} 提示 · 结论：{} · {:.1}s\n",
-        t.repos,
-        t.failed,
-        t.passed,
-        t.errors,
-        t.warnings + t.infos,
-        report.verdict_word(),
-        report.elapsed_ms as f64 / 1000.0
+    out.push_str(&crate::tr!(
+        "{repos} 个仓库：{failed} 未通过 / {passed} 通过 · {errors} 阻断 / {warn} 提示 · 结论：{verdict} · {secs}s",
+        "{repos} repo(s): {failed} failed / {passed} passed · {errors} blocking / {warn} hint(s) · verdict: {verdict} · {secs}s",
+        repos = t.repos,
+        failed = t.failed,
+        passed = t.passed,
+        errors = t.errors,
+        warn = t.warnings + t.infos,
+        verdict = report.verdict_word(),
+        secs = format!("{:.1}", report.elapsed_ms as f64 / 1000.0)
     ));
+    out.push('\n');
     // 全红问题的另一半：就算都没有阻断项，也要让人一眼看到「有活没提交」，
     // 否则会以为报告漏了东西。
     if t.workspace > 0 {
-        out.push_str(&format!(
-            "工作区  {} 个仓库有待提交 / stash / 落后远程（只提示，{}）\n",
-            t.workspace,
-            if report.strict {
-                "严格模式下已计入阻断"
-            } else {
-                "--strict 时算阻断"
-            }
+        let note = if report.strict {
+            crate::i18n::t("严格模式下已计入阻断", "counted as blocking under strict mode")
+        } else {
+            crate::i18n::t("--strict 时算阻断", "blocking only with --strict")
+        };
+        out.push_str(&crate::tr!(
+            "工作区  {n} 个仓库有待提交 / stash / 落后远程（只提示，{note}）",
+            "workspace {n} repo(s) with uncommitted work / stash / behind remote (hints only, {note})",
+            n = t.workspace,
+            note = note
         ));
+        out.push('\n');
     }
     if report.baseline_file.is_some() {
-        out.push_str(&format!(
-            "基线    新增 {} 阻断 / {} 提示 · 已知 {} / {} 不计入结论\n",
-            t.new_errors(),
-            t.new_warnings(),
-            t.known_errors,
-            t.known_warnings
+        out.push_str(&crate::tr!(
+            "基线    新增 {ne} 阻断 / {nw} 提示 · 已知 {ke} / {kw} 不计入结论",
+            "baseline {ne} new blocking / {nw} new hint(s) · {ke} / {kw} known and not counted",
+            ne = t.new_errors(),
+            nw = t.new_warnings(),
+            ke = t.known_errors,
+            kw = t.known_warnings
         ));
+        out.push('\n');
     }
     out
 }
@@ -1220,55 +1291,98 @@ pub fn render_text(report: &Report) -> String {
 pub fn render_markdown(report: &Report) -> String {
     let t = &report.totals;
     let mut out = String::new();
-    out.push_str("# Git Tracer 巡检报告\n\n");
-    out.push_str("| 项 | 值 |\n| --- | --- |\n");
-    out.push_str(&format!("| 时间 | {} |\n", report.generated_at));
-    out.push_str(&format!("| 根目录 | {} |\n", code_join(&report.roots)));
-    out.push_str(&format!("| 扫描深度 | {} |\n", report.depth));
-    out.push_str(&format!("| 基准分支 | {} |\n", base_text(report)));
-    out.push_str(&format!("| 检查模式 | {} |\n", mode_text(report)));
+    out.push_str(crate::i18n::t(
+        "# Git Tracer 巡检报告\n\n",
+        "# Git Tracer audit report\n\n",
+    ));
+    out.push_str(crate::i18n::t(
+        "| 项 | 值 |\n| --- | --- |\n",
+        "| Item | Value |\n| --- | --- |\n",
+    ));
+    out.push_str(&crate::tr!(
+        "| 时间 | {v} |\n",
+        "| Generated | {v} |\n",
+        v = report.generated_at
+    ));
+    out.push_str(&crate::tr!(
+        "| 根目录 | {v} |\n",
+        "| Roots | {v} |\n",
+        v = code_join(&report.roots)
+    ));
+    out.push_str(&crate::tr!(
+        "| 扫描深度 | {v} |\n",
+        "| Scan depth | {v} |\n",
+        v = report.depth
+    ));
+    out.push_str(&crate::tr!(
+        "| 基准分支 | {v} |\n",
+        "| Base branch | {v} |\n",
+        v = base_text(report)
+    ));
+    out.push_str(&crate::tr!(
+        "| 检查模式 | {v} |\n",
+        "| Mode | {v} |\n",
+        v = mode_text(report)
+    ));
     if let Some(b) = &report.baseline_file {
-        out.push_str(&format!(
-            "| 基线 | `{}`（已知项不计入结论） |\n",
-            md_escape(b)
+        out.push_str(&crate::tr!(
+            "| 基线 | `{b}`（已知项不计入结论） |\n",
+            "| Baseline | `{b}` (known issues are not counted) |\n",
+            b = md_escape(b)
         ));
     }
     if !report.branch_allow.is_empty() {
-        out.push_str(&format!(
-            "| 允许分支 | {} |\n",
-            code_join(&report.branch_allow)
+        out.push_str(&crate::tr!(
+            "| 允许分支 | {v} |\n",
+            "| Allowed branches | {v} |\n",
+            v = code_join(&report.branch_allow)
         ));
     }
     if !report.skipped.is_empty() {
-        out.push_str(&format!("| 跳过规则 | {} |\n", report.skipped.join(", ")));
+        out.push_str(&crate::tr!(
+            "| 跳过规则 | {v} |\n",
+            "| Skipped rules | {v} |\n",
+            v = report.skipped.join(", ")
+        ));
     }
     if !report.config_files.is_empty() {
-        out.push_str(&format!(
-            "| 配置文件 | {} 个 `.gittracer.toml` |\n",
-            report.config_files.len()
+        out.push_str(&crate::tr!(
+            "| 配置文件 | {n} 个 `.gittracer.toml` |\n",
+            "| Config files | {n} `.gittracer.toml` |\n",
+            n = report.config_files.len()
         ));
     }
     for e in &report.root_errors {
-        out.push_str(&format!("| 跳过的根目录 | {} |\n", md_escape(e)));
+        out.push_str(&crate::tr!(
+            "| 跳过的根目录 | {e} |\n",
+            "| Skipped roots | {e} |\n",
+            e = md_escape(e)
+        ));
     }
-    out.push_str(&format!("| 结论 | **{}** |\n", report.verdict_word()));
+    out.push_str(&crate::tr!(
+        "| 结论 | **{v}** |\n",
+        "| Verdict | **{v}** |\n",
+        v = report.verdict_word()
+    ));
     out.push('\n');
-    out.push_str(&format!(
-        "{} 个仓库：{} 未通过 / {} 通过 · {} 阻断 / {} 提示 · {:.1}s\n\n",
-        t.repos,
-        t.failed,
-        t.passed,
-        t.errors,
-        t.warnings + t.infos,
-        report.elapsed_ms as f64 / 1000.0
+    out.push_str(&crate::tr!(
+        "{repos} 个仓库：{failed} 未通过 / {passed} 通过 · {errors} 阻断 / {warn} 提示 · {secs}s\n\n",
+        "{repos} repo(s): {failed} failed / {passed} passed · {errors} blocking / {warn} hint(s) · {secs}s\n\n",
+        repos = t.repos,
+        failed = t.failed,
+        passed = t.passed,
+        errors = t.errors,
+        warn = t.warnings + t.infos,
+        secs = format!("{:.1}", report.elapsed_ms as f64 / 1000.0)
     ));
     if report.baseline_file.is_some() {
-        out.push_str(&format!(
-            "结论只看新增：**{} 新增阻断 / {} 新增提示**；另有已知 {} / {} 项在基线里，不计入。\n\n",
-            t.new_errors(),
-            t.new_warnings(),
-            t.known_errors,
-            t.known_warnings
+        out.push_str(&crate::tr!(
+            "结论只看新增：**{ne} 新增阻断 / {nw} 新增提示**；另有已知 {ke} / {kw} 项在基线里，不计入。\n\n",
+            "Only new findings count: **{ne} new blocking / {nw} new hint(s)**; another {ke} / {kw} known item(s) sit in the baseline and are not counted.\n\n",
+            ne = t.new_errors(),
+            nw = t.new_warnings(),
+            ke = t.known_errors,
+            kw = t.known_warnings
         ));
     }
 
@@ -1276,30 +1390,46 @@ pub fn render_markdown(report: &Report) -> String {
     let passed: Vec<&RepoAudit> = report.repos.iter().filter(|r| !r.failed()).collect();
 
     if failed.is_empty() {
-        out.push_str("## 需要处理\n\n没有阻断项。\n\n");
+        out.push_str(crate::i18n::t(
+            "## 需要处理\n\n没有阻断项。\n\n",
+            "## Needs attention\n\nNo blocking findings.\n\n",
+        ));
     } else {
-        out.push_str(&format!("## 需要处理（{}）\n\n", failed.len()));
+        out.push_str(&crate::tr!(
+            "## 需要处理（{n}）\n\n",
+            "## Needs attention ({n})\n\n",
+            n = failed.len()
+        ));
         for repo in failed {
-            out.push_str(&format!(
-                "### {} `{}`\n\n`{}`\n\n",
-                md_escape(&repo.name),
-                md_escape(repo.branch.as_deref().unwrap_or("detached")),
-                md_escape(&repo.path)
+            out.push_str(&crate::tr!(
+                "### {name} `{branch}`\n\n`{path}`\n\n",
+                "### {name} `{branch}`\n\n`{path}`\n\n",
+                name = md_escape(&repo.name),
+                branch = md_escape(repo.branch.as_deref().unwrap_or("detached")),
+                path = md_escape(&repo.path)
             ));
             // 结论是被本地配置放宽过的，必须写出来，不然这份报告不能当证据
             if let Some(c) = &repo.config {
-                out.push_str(&format!("依据仓库配置：`{}`\n\n", md_escape(c)));
-            }
-            if !same_skip(&repo.effective_skip, &report.skipped) {
-                out.push_str(&format!(
-                    "本仓库跳过：{}\n\n",
-                    md_escape(&repo.effective_skip.join(", "))
+                out.push_str(&crate::tr!(
+                    "依据仓库配置：`{c}`\n\n",
+                    "Repo config in effect: `{c}`\n\n",
+                    c = md_escape(c)
                 ));
             }
-            out.push_str("| 级别 | 规则 | 说明 |\n| --- | --- | --- |\n");
+            if !same_skip(&repo.effective_skip, &report.skipped) {
+                out.push_str(&crate::tr!(
+                    "本仓库跳过：{v}\n\n",
+                    "Skipped in this repo: {v}\n\n",
+                    v = md_escape(&repo.effective_skip.join(", "))
+                ));
+            }
+            out.push_str(crate::i18n::t(
+                "| 级别 | 规则 | 说明 |\n| --- | --- | --- |\n",
+                "| Level | Rule | Message |\n| --- | --- | --- |\n",
+            ));
             for f in &repo.findings {
                 let known = if f.baseline == Some(BaselineState::Known) {
-                    "（已知，不计入结论）"
+                    crate::i18n::t("（已知，不计入结论）", " (known, not counted)")
                 } else {
                     ""
                 };
@@ -1313,7 +1443,12 @@ pub fn render_markdown(report: &Report) -> String {
             out.push('\n');
             for f in &repo.findings {
                 if let Some(d) = &f.detail {
-                    out.push_str(&format!("- {}：{}\n", md_escape(&f.code), md_escape(d)));
+                    out.push_str(&crate::tr!(
+                        "- {code}：{detail}\n",
+                        "- {code}: {detail}\n",
+                        code = md_escape(&f.code),
+                        detail = md_escape(d)
+                    ));
                 }
             }
             out.push('\n');
@@ -1327,13 +1462,19 @@ pub fn render_markdown(report: &Report) -> String {
         .copied()
         .filter(|r| r.workspace_pending())
         .collect();
+
     if !workspace.is_empty() {
-        out.push_str(&format!(
-            "## 工作区（{}，不计入结论）\n\n\
+        out.push_str(&crate::tr!(
+            "## 工作区（{n}，不计入结论）\n\n\
              这些仓库有未提交改动 / stash / 落后远程。不影响「能不能发」，\
              但如果你是从工作区直接打包的，用 `--strict` 再跑一遍。\n\n\
              | 仓库 | 分支 | 待处理 |\n| --- | --- | --- |\n",
-            workspace.len()
+            "## Workspace ({n}, not counted)\n\n\
+             These repos have uncommitted changes / stash / commits behind the remote. \
+             They do not affect whether you can ship, but if you package straight from \
+             the working tree, re-run with `--strict`.\n\n\
+             | Repo | Branch | Pending |\n| --- | --- | --- |\n",
+            n = workspace.len()
         ));
         for repo in &workspace {
             out.push_str(&format!(
@@ -1347,22 +1488,27 @@ pub fn render_markdown(report: &Report) -> String {
     }
 
     if !passed.is_empty() {
-        out.push_str(&format!("## 已通过（{}）\n\n", passed.len()));
+        out.push_str(&crate::tr!(
+            "## 已通过（{n}）\n\n",
+            "## Passed ({n})\n\n",
+            n = passed.len()
+        ));
         for repo in passed {
             let mut tag = String::new();
             if repo.config.is_some() {
-                tag.push_str(" · 依据仓库配置");
+                tag.push_str(crate::i18n::t(" · 依据仓库配置", " · repo config"));
             }
             // 靠跳过规则才过的仓库，不能只写「通过」——报告要能自证
             if !same_skip(&repo.effective_skip, &report.skipped) {
-                tag.push_str(&format!(
-                    " · 跳过 {}",
-                    md_escape(&repo.effective_skip.join(", "))
+                tag.push_str(&crate::tr!(
+                    " · 跳过 {v}",
+                    " · skipped {v}",
+                    v = md_escape(&repo.effective_skip.join(", "))
                 ));
             }
             // 脏着过的仓库要标出来：不然「全部通过」会被读成「什么都不用管」
             if repo.workspace_pending() {
-                tag.push_str(" · 工作区有活");
+                tag.push_str(crate::i18n::t(" · 工作区有活", " · workspace pending"));
             }
             out.push_str(&format!(
                 "- {} `{}`{}\n",
@@ -1425,16 +1571,25 @@ fn same_skip(a: &[String], b: &[String]) -> bool {
 fn base_text(report: &Report) -> String {
     match &report.base {
         Some(b) => b.clone(),
-        None => "自动探测（main / master / develop）".to_string(),
+        None => crate::i18n::t(
+            "自动探测（main / master / develop）",
+            "auto (main / master / develop)",
+        )
+        .to_string(),
     }
 }
 
 /// 两种模式的区别就一句话：脏树算不算阻断。
 fn mode_text(report: &Report) -> String {
     if report.strict {
-        "严格（未提交改动算阻断）".to_string()
+        crate::i18n::t(
+            "严格（未提交改动算阻断）",
+            "strict (uncommitted changes block)",
+        )
+        .to_string()
     } else {
-        "默认（未提交改动只提示）".to_string()
+        crate::i18n::t("默认（未提交改动只提示）", "default (uncommitted changes are hints)")
+            .to_string()
     }
 }
 
@@ -1442,7 +1597,7 @@ fn code_join(list: &[String]) -> String {
     list.iter()
         .map(|s| format!("`{}`", md_escape(s)))
         .collect::<Vec<_>>()
-        .join("、")
+        .join(crate::i18n::t("、", ", "))
 }
 
 /// Markdown 转义：竖线会把单元格切开，反引号会把后续文字带进代码块，
@@ -1767,11 +1922,12 @@ mod tests {
             verdict: Verdict::Passed,
             elapsed_ms: 0,
         };
-        assert_eq!(base.verdict.word(), "通过");
+        // 断言跟着当前语言走：这两个词是给人看的，随语言设置变
+        assert_eq!(base.verdict.word(), crate::i18n::t("通过", "Passed"));
 
         // 有提示、没阻断：注意（能发，但报告里要交代一句）
-        assert_eq!(Verdict::Attention.word(), "注意");
-        assert_eq!(Verdict::Blocked.word(), "未通过");
+        assert_eq!(Verdict::Attention.word(), crate::i18n::t("注意", "Attention"));
+        assert_eq!(Verdict::Blocked.word(), crate::i18n::t("未通过", "Blocked"));
 
         // 根目录不可用：没有 error，但报告缺东西，不能算通过
         let mut broken_root = base;

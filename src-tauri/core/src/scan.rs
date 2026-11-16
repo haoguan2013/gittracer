@@ -77,10 +77,18 @@ fn is_repo_marker(dir: &Path) -> Option<&'static str> {
 pub fn scan(root: &Path, max_depth: u32, limit: usize) -> Result<ScanResult, String> {
     let started = Instant::now();
     if !root.exists() {
-        return Err(format!("目录不存在：{}", root.display()));
+        return Err(crate::tr!(
+            "目录不存在：{p}",
+            "Directory does not exist: {p}",
+            p = root.display()
+        ));
     }
     if !root.is_dir() {
-        return Err(format!("不是一个目录：{}", root.display()));
+        return Err(crate::tr!(
+            "不是一个目录：{p}",
+            "Not a directory: {p}",
+            p = root.display()
+        ));
     }
 
     let mut repos: Vec<RepoRef> = Vec::new();

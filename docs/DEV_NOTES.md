@@ -278,6 +278,42 @@ docs/
 
 ## 更新记录
 
+**0.10.0**
+
+- **语言基础设施 `core/src/i18n.rs`**：`Lang { Zh, En }` + 进程级开关
+  `static CURRENT: AtomicU8`（`Ordering::Relaxed`）。为什么用全局而不是给每个函数加 `lang` 参数：
+  `git.rs` 有 1500 行、几十个 `git()` 封装，逐个透传语言等于把签名全改一遍，收益为零。
+  文案统一走 `crate::tr!("中文", "English", key = value)` 宏——**中英两句各自 `format!`，
+  占位符按名字传**，中英语序不同也不会错位（`{n} 个仓库` / `{n} repo(s)` 这类位置会变）。
+  纯静态的用 `i18n::t(zh, en)`。语言探测顺序：`GITTRACER_LANG` > `LC_ALL` > `LC_MESSAGES` >
+  `LANG` > 中文；`Lang::parse` 认 `zh` / `zh-CN` / `en` / `en_US` 这些写法。
+- **CLI 先扫一遍参数再干活**：`main()` 第一件事是 `i18n::set(pick_lang(&args))`，
+  所以在解析其它参数**之前**语言就已经定了——帮助、`--lang` 的非法值报错、`--version`
+  才能各自用对的语种输出。非法值（`--lang fr`）是报错而不是静默退回中文。
+- **后端文案**：`audit.rs`（含三种渲染器 text / markdown / sarif 的标题与摘要）、
+  `config.rs`、`scan.rs`、`git.rs` 里拼给用户看的字符串全部双语。`cmd_fallback()` 之类
+  原来写死 `"命令"` 的兜底值改成 `t("命令", "command")`。测试断言跟着语言走
+  （`assert_eq!(base.verdict.word(), i18n::t("通过", "Passed"))`），不再硬编码中文。
+- **前端 `dist/i18n.js`（新增）**：字典的 key 直接是中文原文——省掉起名字的维护成本，
+  漏翻时 `t()` 退回中文不会出现空白按钮。静态文案在 `index.html` 标 `data-i18n` /
+  `data-i18n-ph` / `data-i18n-title`，**首次 `applyI18n()` 时把元素原本的中文记进
+  `dataset.*Key`**，所以 HTML 里不用把中文再抄一遍。动态文案写 `t('中文 {x}', {x})`。
+- **`onLangChanged()`**：切语言后把「由 JS 画出来」的区域整套重画（根目录标签、统计条、
+  仓库列表、文件列表、差异、提交栏、状态栏）；巡检面板正好开着就把用户填的内容读回来再重画。
+  静态部分不用管，`applyI18n()` 已经刷过了。
+- **踩到的坑**：① `auditResultHtml()` 里原本有 `const t = r.totals`，加了全局 `t()` 之后
+  这个局部变量把函数遮蔽掉，`t('未通过')` 直接报 `t is not a function`——改名 `tot`；
+  ② `#statusLeft` 上挂了 `data-i18n`，于是每次 `applyI18n()` 都把「扫描完成：…」刷回「就绪」，
+  去掉标记改用 `renderStatus()` 重拼；③ `.pick-all span` 同时命中了复选框和「全选」文字两个
+  span，中文两字勉强撑开、英文 `SELECT ALL` 直接溢到输入框上，选择器收窄成 `input + span`；
+  ④ 给模板字符串批量包 `t()` 的脚本要带上下文栈（`code` / `tpl`），否则会把 `t(...)`
+  插进 `${}` 里面。
+- **修「…等 N 个」的差一错误**：`sample_paths` 列 3 个、未合并分支列 5 个，省略数写的是
+  `len()` 而不是 `len() - 显示数`，13 处改动会显示「…and 13 more」（实际还剩 10 个）。
+- **测试**：core 45 项（i18n 新增 2 项：标签解析、切语言后两个 helper 同步生效）。
+  GUI 用 `tools/cdp.mjs` 走 CDP 冒烟：中 → 英 → 开巡检 → 跑一次巡检 → 关面板 → 切回中文，
+  每步截图并比对 30 多个元素的文案，页面无 console 报错。
+
 **0.9.1**
 
 - **`resolve_base` 回退到远程跟踪引用**：候选写法从「只是一个分支名」变成 `c` / `origin/c` /

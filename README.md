@@ -1,6 +1,6 @@
 # Git Tracer
 
-![Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6) ![Tauri 2 + Rust](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20Rust-DEA584) ![零构建前端](https://img.shields.io/badge/Frontend-HTML%20%2F%20CSS%20%2F%20JS-3178C6) ![v0.9.1](https://img.shields.io/badge/Version-0.9.1-2F81F7) ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue)
+![Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6) ![Tauri 2 + Rust](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20Rust-DEA584) ![零构建前端](https://img.shields.io/badge/Frontend-HTML%20%2F%20CSS%20%2F%20JS-3178C6) ![v0.10.0](https://img.shields.io/badge/Version-0.10.0-2F81F7) ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue)
 
 **中文** · [English](README.en.md)
 
@@ -96,6 +96,19 @@ flowchart LR
 
 - **记得住**：根目录列表、扫描深度、过滤开关、当前标签页都存在本地，下次打开还在。
 
+### 中英文都行
+
+顶栏「重新扫描」左边有个语言按钮，中文界面显示 `EN`、英文界面显示 `中文`，点一下整个界面就换——仓库徽标、文件分组、差异提示、提交 / 推送 / 拉取确认框、回滚对话框、巡检面板和整份结论、底部状态栏，都是成套换的，不是只换几个按钮。第一次打开按系统语言决定（中文系统用中文，其余英文），手动选过之后记在本地，下次还是它。
+
+命令行同理，报告正文、`--help`、报错都跟着走：
+
+```sh
+gittracer-audit --lang en          # 显式指定
+GITTRACER_LANG=en gittracer-audit .   # 或者用环境变量
+```
+
+优先级 `--lang` > `GITTRACER_LANG` > `LC_ALL` / `LC_MESSAGES` / `LANG` > 中文。报告 JSON 的字段名与取值不受语言影响，要机器读就还读 JSON。
+
 ### 发版前，先体检一遍
 
 点右上角「巡检」。它不问改了什么，只回答一个问题：**这些仓库现在能不能发。**
@@ -150,7 +163,7 @@ gittracer-audit --root ~/work --branch "main,release/*" --base main       # Linu
 - run: gittracer-audit --root . --branch "main,release/*" --fail-on error
 ```
 
-`--format text|md|json|sarif`、`--out 报告.md`、`--skip stash,unmerged` 都支持，`gittracer-audit --help` 看全量参数。`sarif` 是 GitHub Code scanning 的格式，配合 `github/codeql-action/upload-sarif` 能把巡检结果直接挂到仓库的 Security 标签页（本仓库的工作流已经在这么用）。它和界面一样只读：不 fetch、不写任何引用、不碰工作区。
+`--format text|md|json|sarif`、`--out 报告.md`、`--skip stash,unmerged`、`--lang zh|en` 都支持，`gittracer-audit --help` 看全量参数。`sarif` 是 GitHub Code scanning 的格式，配合 `github/codeql-action/upload-sarif` 能把巡检结果直接挂到仓库的 Security 标签页（本仓库的工作流已经在这么用）。它和界面一样只读：不 fetch、不写任何引用、不碰工作区。
 
 #### 基线：让门禁只盯新问题
 
@@ -203,13 +216,13 @@ strict = true                  # 从工作区直接打包发版时打开：未�
 ```yaml
 jobs:
   audit:
-    uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.9.1
+    uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.10.0
     with:
       roots: '.'
       branch: 'main,release/*'
 ```
 
-它自己编译 `gittracer-audit`，不依赖已经发布的安装包；报告写进 job summary 并作为 artifact 留档，返回码非 0 就让 job 失败。输入项留空就吃仓库里的 `.gittracer.toml`：`depth`、允许分支、基准、跳过项都能写在文件里，工作流只负责跑。（`@v0.9.1` 是发版后的 tag，还没打就先写 `@main`。）不想在 CI 里编 Rust 的话，Releases 里有三个平台的现成 CLI（`gittracer-audit-linux-x64.tar.gz` / `gittracer-audit-macos-arm64.tar.gz` / `gittracer-audit-windows-x64.zip`），取一份替掉「构建巡检程序」那步即可。
+它自己编译 `gittracer-audit`，不依赖已经发布的安装包；报告写进 job summary 并作为 artifact 留档，返回码非 0 就让 job 失败。输入项留空就吃仓库里的 `.gittracer.toml`：`depth`、允许分支、基准、跳过项都能写在文件里，工作流只负责跑。（`@v0.10.0` 是发版后的 tag，还没打就先写 `@main`。）不想在 CI 里编 Rust 的话，Releases 里有三个平台的现成 CLI（`gittracer-audit-linux-x64.tar.gz` / `gittracer-audit-macos-arm64.tar.gz` / `gittracer-audit-windows-x64.zip`），取一份替掉「构建巡检程序」那步即可。
 
 本仓库自己跑这个工作流时，还会顺手把 SARIF 版报告传到 Code scanning 标签页——巡检结果在仓库页就能看，不用点进日志找。别的仓库复用时不带这步（那边要 `security-events` 权限，由调用方自己决定）。
 
@@ -255,7 +268,7 @@ jobs:
 
 ## 下载与安装
 
-到本仓库的 **Releases** 页面下载 `GitTracer-0.9.1-portable.zip`（仓库里不放二进制包，也可以按下面的命令自己生成）：
+到本仓库的 **Releases** 页面下载 `GitTracer-0.10.0-portable.zip`（仓库里不放二进制包，也可以按下面的命令自己生成）：
 
 | 方式 | 做法 | 说明 |
 | --- | --- | --- |
@@ -281,7 +294,7 @@ pnpm tauri build    # release exe + NSIS 安装包
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\make-package.ps1
 ```
 
-产物在 `src-tauri/target/release/git-tracer.exe`、同目录下的 `gittracer-audit.exe`，以及 `GitTracer-0.9.1-portable.zip`。`tools/` 里还有生成测试仓库的 `make-demo-data.ps1`、生成图标的 `make-icons.py`（纯标准库）、用 CDP 驱动界面截图的 `cdp.mjs`，以及录 README 动图的两步：`make-gif.mjs` 抓帧、`gif.py` 合成（这一步要 `pip install pillow`）。
+产物在 `src-tauri/target/release/git-tracer.exe`、同目录下的 `gittracer-audit.exe`，以及 `GitTracer-0.10.0-portable.zip`。`tools/` 里还有生成测试仓库的 `make-demo-data.ps1`、生成图标的 `make-icons.py`（纯标准库）、用 CDP 驱动界面截图的 `cdp.mjs`，以及录 README 动图的两步：`make-gif.mjs` 抓帧、`gif.py` 合成（这一步要 `pip install pillow`）。
 
 ### 项目怎么搭的
 

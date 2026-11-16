@@ -150,16 +150,17 @@ pub fn info() -> GitInfo {
                     available: false,
                     version: None,
                     exe: Some(exe.display().to_string()),
-                    hint: Some(format!(
-                        "git --version 执行失败：{}",
-                        String::from_utf8_lossy(&out.stderr).trim()
+                    hint: Some(crate::tr!(
+                        "git --version 执行失败：{err}",
+                        "git --version failed: {err}",
+                        err = String::from_utf8_lossy(&out.stderr).trim()
                     )),
                 },
                 Err(e) => GitInfo {
                     available: false,
                     version: None,
                     exe: None,
-                    hint: Some(format!("无法启动 git：{e}")),
+                    hint: Some(crate::tr!("无法启动 git：{e}", "Cannot start git: {e}", e = e)),
                 },
             }
         }
@@ -168,8 +169,11 @@ pub fn info() -> GitInfo {
             version: None,
             exe: None,
             hint: Some(
-                "未找到 git.exe。请安装 Git for Windows（https://git-scm.com/download/win），安装后重启本程序。"
-                    .to_string(),
+                crate::i18n::t(
+                    "未找到 git.exe。请安装 Git for Windows（https://git-scm.com/download/win），安装后重启本程序。",
+                    "git.exe not found. Install Git for Windows (https://git-scm.com/download/win), then restart this app.",
+                )
+                .to_string(),
             ),
         },
     }
@@ -212,7 +216,7 @@ fn run_git_timeout(exe: &Path, cwd: &Path, args: &[&str], timeout: Duration) -> 
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("无法执行 {}：{e}", exe.display()))?;
+        .map_err(|e| crate::tr!("无法执行 {p}：{e}", "Cannot run {p}: {e}", p = exe.display(), e = e))?;
 
     let mut out_pipe = child.stdout.take();
     let mut err_pipe = child.stderr.take();
@@ -248,7 +252,11 @@ fn run_git_timeout(exe: &Path, cwd: &Path, args: &[&str], timeout: Duration) -> 
             Err(e) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!("等待 git 结束失败：{e}"));
+                return Err(crate::tr!(
+                    "等待 git 结束失败：{e}",
+                    "Failed while waiting for git to exit: {e}",
+                    e = e
+                ));
             }
         }
     };
@@ -264,16 +272,18 @@ fn run_git_timeout(exe: &Path, cwd: &Path, args: &[&str], timeout: Duration) -> 
         let tail = String::from_utf8_lossy(&stderr);
         let tail = tail.trim();
         return Err(if tail.is_empty() {
-            format!(
-                "git {} 超过 {} 秒没返回，已放弃（仓库太大或磁盘太慢）",
-                args.first().copied().unwrap_or("命令"),
-                timeout.as_secs()
+            crate::tr!(
+                "git {cmd} 超过 {secs} 秒没返回，已放弃（仓库太大或磁盘太慢）",
+                "git {cmd} did not return within {secs}s; gave up (repo too large or disk too slow)",
+                cmd = args.first().copied().unwrap_or(cmd_fallback()),
+                secs = timeout.as_secs()
             )
         } else {
-            format!(
-                "git {} 超过 {} 秒没返回，已放弃：{tail}",
-                args.first().copied().unwrap_or("命令"),
-                timeout.as_secs()
+            crate::tr!(
+                "git {cmd} 超过 {secs} 秒没返回，已放弃：{tail}",
+                "git {cmd} did not return within {secs}s; gave up: {tail}",
+                cmd = args.first().copied().unwrap_or(cmd_fallback()),
+                secs = timeout.as_secs()
             )
         });
     }
@@ -295,16 +305,20 @@ fn stdout_text(out: &Output) -> String {
 /// 失败一律转成中文错误，不把裸 exit code 抛给调用方。
 pub fn git_lines(repo: &Path, args: &[&str]) -> Result<Vec<String>, String> {
     let exe = git_exe().ok_or_else(|| {
-        "未找到 git.exe，请先安装 Git for Windows 后重启本程序。".to_string()
+        crate::i18n::t(
+            "未找到 git.exe，请先安装 Git for Windows 后重启本程序。",
+            "git.exe not found. Install Git for Windows and restart this app.",
+        )
+        .to_string()
     })?;
     let out = run_git(&exe, repo, args)?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        let name = args.first().copied().unwrap_or("命令");
+        let name = args.first().copied().unwrap_or(cmd_fallback());
         return Err(if err.is_empty() {
-            format!("git {name} 执行失败")
+            crate::tr!("git {name} 执行失败", "git {name} failed", name = name)
         } else {
-            format!("git {name} 失败：{err}")
+            crate::tr!("git {name} 失败：{err}", "git {name} failed: {err}", name = name, err = err)
         });
     }
     Ok(stdout_text(&out)
@@ -465,13 +479,25 @@ pub fn status_lite(repo: &Path) -> Result<RepoStatus, String> {
 
 fn status_impl(repo: &Path, with_numstat: bool) -> Result<RepoStatus, String> {
     let exe = git_exe().ok_or_else(|| {
-        "未找到 git.exe，请先安装 Git for Windows 后重启本程序。".to_string()
+        crate::i18n::t(
+            "未找到 git.exe，请先安装 Git for Windows 后重启本程序。",
+            "git.exe not found. Install Git for Windows and restart this app.",
+        )
+        .to_string()
     })?;
     if !repo.is_dir() {
-        return Err(format!("目录不存在：{}", repo.display()));
+        return Err(crate::tr!(
+            "目录不存在：{p}",
+            "Directory does not exist: {p}",
+            p = repo.display()
+        ));
     }
     if !repo.join(".git").exists() {
-        return Err(format!("不是 Git 仓库：{}", repo.display()));
+        return Err(crate::tr!(
+            "不是 Git 仓库：{p}",
+            "Not a Git repository: {p}",
+            p = repo.display()
+        ));
     }
 
     let out = run_git(
@@ -488,9 +514,9 @@ fn status_impl(repo: &Path, with_numstat: bool) -> Result<RepoStatus, String> {
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(if err.is_empty() {
-            "git status 执行失败".to_string()
+            crate::i18n::t("git status 执行失败", "git status failed").to_string()
         } else {
-            format!("git status 失败：{err}")
+            crate::tr!("git status 失败：{err}", "git status failed: {err}", err = err)
         });
     }
 
@@ -547,7 +573,11 @@ fn status_impl(repo: &Path, with_numstat: bool) -> Result<RepoStatus, String> {
                 // 1 XY sub mH mI mW hH hI <path>
                 let f: Vec<&str> = line.splitn(9, ' ').collect();
                 if f.len() < 9 {
-                    warnings.push(format!("无法解析状态行：{line}"));
+                    warnings.push(crate::tr!(
+                        "无法解析状态行：{line}",
+                        "Cannot parse status line: {line}",
+                        line = line
+                    ));
                     continue;
                 }
                 let xy = f[1].as_bytes();
@@ -568,7 +598,11 @@ fn status_impl(repo: &Path, with_numstat: bool) -> Result<RepoStatus, String> {
                 // 2 XY sub mH mI mW hH hI X<score> <path>\t<origPath>
                 let f: Vec<&str> = line.splitn(10, ' ').collect();
                 if f.len() < 10 {
-                    warnings.push(format!("无法解析重命名行：{line}"));
+                    warnings.push(crate::tr!(
+                        "无法解析重命名行：{line}",
+                        "Cannot parse rename line: {line}",
+                        line = line
+                    ));
                     continue;
                 }
                 let xy = f[1].as_bytes();
@@ -594,7 +628,11 @@ fn status_impl(repo: &Path, with_numstat: bool) -> Result<RepoStatus, String> {
                 // u XY sub m1 m2 m3 mW h1 h2 h3 <path>
                 let f: Vec<&str> = line.splitn(11, ' ').collect();
                 if f.len() < 11 {
-                    warnings.push(format!("无法解析冲突行：{line}"));
+                    warnings.push(crate::tr!(
+                        "无法解析冲突行：{line}",
+                        "Cannot parse conflict line: {line}",
+                        line = line
+                    ));
                     continue;
                 }
                 let xy = f[1].as_bytes();
@@ -705,20 +743,29 @@ fn looks_binary(bytes: &[u8]) -> bool {
 /// * `untracked = true` → 直接读文件原文（git 对未跟踪文件没有 diff），由前端渲染成「全绿」
 pub fn file_diff(repo: &Path, file: &str, staged: bool, untracked: bool) -> Result<FileDiff, String> {
     let exe = git_exe()
-        .ok_or_else(|| "未找到 git.exe，请先安装 Git for Windows 后重启本程序。".to_string())?;
+        .ok_or_else(|| crate::i18n::t(
+            "未找到 git.exe，请先安装 Git for Windows 后重启本程序。",
+            "git.exe not found. Install Git for Windows and restart this app.",
+        )
+        .to_string())?;
     if !repo.is_dir() {
-        return Err(format!("目录不存在：{}", repo.display()));
+        return Err(crate::tr!(
+            "目录不存在：{p}",
+            "Directory does not exist: {p}",
+            p = repo.display()
+        ));
     }
     // 未跟踪文件是直接 fs::read 的，不校验就能用 `../../x` 读到仓库外的文件；
     // 提交那条路径本来就有这层校验，diff 这边漏了，补齐。
     check_rel_path(file)?;
     let full = repo.join(file);
     if !full.starts_with(repo) {
-        return Err("非法路径".to_string());
+        return Err(crate::i18n::t("非法路径", "Invalid path").to_string());
     }
 
     if untracked {
-        let meta = std::fs::metadata(&full).map_err(|e| format!("读取文件失败：{e}"))?;
+        let meta = std::fs::metadata(&full)
+            .map_err(|e| crate::tr!("读取文件失败：{e}", "Cannot read the file: {e}", e = e))?;
         let size = meta.len();
         if !meta.is_file() {
             return Ok(FileDiff {
@@ -726,7 +773,13 @@ pub fn file_diff(repo: &Path, file: &str, staged: bool, untracked: bool) -> Resu
                 text: None,
                 truncated: false,
                 size: Some(size),
-                message: Some("这是目录 / 子模块，没有可预览的文本内容".into()),
+                message: Some(
+                    crate::i18n::t(
+                        "这是目录 / 子模块，没有可预览的文本内容",
+                        "This is a directory / submodule with no text to preview",
+                    )
+                    .to_string(),
+                ),
             });
         }
         if size > MAX_DIFF_BYTES {
@@ -735,20 +788,28 @@ pub fn file_diff(repo: &Path, file: &str, staged: bool, untracked: bool) -> Resu
                 text: None,
                 truncated: true,
                 size: Some(size),
-                message: Some(format!(
-                    "文件过大（{}），未加载预览",
-                    human_size(size)
+                message: Some(crate::tr!(
+                    "文件过大（{size}），未加载预览",
+                    "File too large ({size}); preview not loaded",
+                    size = human_size(size)
                 )),
             });
         }
-        let bytes = std::fs::read(&full).map_err(|e| format!("读取文件失败：{e}"))?;
+        let bytes = std::fs::read(&full)
+            .map_err(|e| crate::tr!("读取文件失败：{e}", "Cannot read the file: {e}", e = e))?;
         if looks_binary(&bytes) {
             return Ok(FileDiff {
                 kind: "binary".into(),
                 text: None,
                 truncated: false,
                 size: Some(size),
-                message: Some("这个文件是二进制，没法按文本预览。".into()),
+                message: Some(
+                    crate::i18n::t(
+                        "这个文件是二进制，没法按文本预览。",
+                        "This file is binary and cannot be previewed as text.",
+                    )
+                    .to_string(),
+                ),
             });
         }
         let text = String::from_utf8_lossy(&bytes).into_owned();
@@ -772,9 +833,9 @@ pub fn file_diff(repo: &Path, file: &str, staged: bool, untracked: bool) -> Resu
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(if err.is_empty() {
-            "git diff 执行失败".to_string()
+            crate::i18n::t("git diff 执行失败", "git diff failed").to_string()
         } else {
-            format!("git diff 失败：{err}")
+            crate::tr!("git diff 失败：{err}", "git diff failed: {err}", err = err)
         });
     }
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -784,7 +845,13 @@ pub fn file_diff(repo: &Path, file: &str, staged: bool, untracked: bool) -> Resu
             text: None,
             truncated: false,
             size: None,
-            message: Some("该侧没有差异（可能只改了文件模式，或内容与另一侧一致）".into()),
+            message: Some(
+                crate::i18n::t(
+                    "该侧没有差异（可能只改了文件模式，或内容与另一侧一致）",
+                    "No difference on this side (maybe only the file mode changed, or the content matches the other side)",
+                )
+                .to_string(),
+            ),
         });
     }
     if text.contains("Binary files ") || text.contains("GIT binary patch") {
@@ -793,7 +860,13 @@ pub fn file_diff(repo: &Path, file: &str, staged: bool, untracked: bool) -> Resu
             text: Some(text),
             truncated: false,
             size: None,
-            message: Some("git 不给二进制文件出文本差异，只能看出它被改过。".into()),
+            message: Some(
+                crate::i18n::t(
+                    "git 不给二进制文件出文本差异，只能看出它被改过。",
+                    "git produces no text diff for binary files; all you can tell is that it changed.",
+                )
+                .to_string(),
+            ),
         });
     }
     Ok(FileDiff {
@@ -837,9 +910,17 @@ fn is_hex_ref(hash: &str) -> bool {
 /// `--all` 才能看到所有分支；`--date-order` 比默认的拓扑序更接近图形化工具的样子。
 pub fn graph(repo: &Path, limit: usize) -> Result<RepoGraph, String> {
     let exe = git_exe()
-        .ok_or_else(|| "未找到 git.exe，请先安装 Git for Windows 后重启本程序。".to_string())?;
+        .ok_or_else(|| crate::i18n::t(
+            "未找到 git.exe，请先安装 Git for Windows 后重启本程序。",
+            "git.exe not found. Install Git for Windows and restart this app.",
+        )
+        .to_string())?;
     if !repo.is_dir() {
-        return Err(format!("目录不存在：{}", repo.display()));
+        return Err(crate::tr!(
+            "目录不存在：{p}",
+            "Directory does not exist: {p}",
+            p = repo.display()
+        ));
     }
     let n = limit.clamp(1, 2000);
     let take = (n + 1).to_string();
@@ -867,7 +948,11 @@ pub fn graph(repo: &Path, limit: usize) -> Result<RepoGraph, String> {
                 truncated: false,
             });
         }
-        return Err(format!("git log 失败：{}", err.trim()));
+        return Err(crate::tr!(
+            "git log 失败：{e}",
+            "git log failed: {e}",
+            e = err.trim()
+        ));
     }
     let mut commits = Vec::new();
     for rec in stdout.split('\u{1e}') {
@@ -903,12 +988,20 @@ pub fn graph(repo: &Path, limit: usize) -> Result<RepoGraph, String> {
 /// 单个提交的补丁（合并提交按第一父展开；不显示 commit 头，和文件 diff 一个渲染器）。
 pub fn commit_diff(repo: &Path, hash: &str) -> Result<FileDiff, String> {
     let exe = git_exe()
-        .ok_or_else(|| "未找到 git.exe，请先安装 Git for Windows 后重启本程序。".to_string())?;
+        .ok_or_else(|| crate::i18n::t(
+            "未找到 git.exe，请先安装 Git for Windows 后重启本程序。",
+            "git.exe not found. Install Git for Windows and restart this app.",
+        )
+        .to_string())?;
     if !repo.is_dir() {
-        return Err(format!("目录不存在：{}", repo.display()));
+        return Err(crate::tr!(
+            "目录不存在：{p}",
+            "Directory does not exist: {p}",
+            p = repo.display()
+        ));
     }
     if !is_hex_ref(hash) {
-        return Err("提交号不合法".to_string());
+        return Err(crate::i18n::t("提交号不合法", "Invalid commit hash").to_string());
     }
     let h = hash.trim().to_string();
     let args: Vec<&str> = vec![
@@ -925,9 +1018,9 @@ pub fn commit_diff(repo: &Path, hash: &str) -> Result<FileDiff, String> {
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(if err.is_empty() {
-            "git show 执行失败".to_string()
+            crate::i18n::t("git show 执行失败", "git show failed").to_string()
         } else {
-            format!("git show 失败：{err}")
+            crate::tr!("git show 失败：{err}", "git show failed: {err}", err = err)
         });
     }
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -937,7 +1030,10 @@ pub fn commit_diff(repo: &Path, hash: &str) -> Result<FileDiff, String> {
             text: None,
             truncated: false,
             size: None,
-            message: Some("这个提交没有内容变化".into()),
+            message: Some(
+                crate::i18n::t("这个提交没有内容变化", "This commit has no content changes")
+                    .to_string(),
+            ),
         });
     }
     if text.contains("Binary files ") || text.contains("GIT binary patch") {
@@ -946,7 +1042,10 @@ pub fn commit_diff(repo: &Path, hash: &str) -> Result<FileDiff, String> {
             text: Some(text),
             truncated: false,
             size: None,
-            message: Some("这个提交里有二进制文件".into()),
+            message: Some(
+                crate::i18n::t("这个提交里有二进制文件", "This commit contains binary files")
+                    .to_string(),
+            ),
         });
     }
     Ok(FileDiff {
@@ -1001,20 +1100,36 @@ fn stderr_text(out: &Output) -> String {
 fn check_rel_path(file: &str) -> Result<(), String> {
     let f = file.trim();
     if f.is_empty() {
-        return Err("文件路径为空".to_string());
+        return Err(crate::i18n::t("文件路径为空", "File path is empty").to_string());
     }
     if f.contains('\0') {
-        return Err("文件路径含非法字符".to_string());
+        return Err(crate::i18n::t(
+            "文件路径含非法字符",
+            "File path contains invalid characters",
+        )
+        .to_string());
     }
     if f.starts_with('/') || f.starts_with('\\') {
-        return Err(format!("只接受仓库内的相对路径，收到绝对路径：{f}"));
+        return Err(crate::tr!(
+            "只接受仓库内的相对路径，收到绝对路径：{f}",
+            "Only repo-relative paths are accepted; got an absolute path: {f}",
+            f = f
+        ));
     }
     let bytes = f.as_bytes();
     if bytes.len() >= 2 && bytes[1] == b':' {
-        return Err(format!("只接受仓库内的相对路径，收到盘符路径：{f}"));
+        return Err(crate::tr!(
+            "只接受仓库内的相对路径，收到盘符路径：{f}",
+            "Only repo-relative paths are accepted; got a drive-letter path: {f}",
+            f = f
+        ));
     }
     if f.split(['/', '\\']).any(|seg| seg == "..") {
-        return Err(format!("路径不能跳出仓库：{f}"));
+        return Err(crate::tr!(
+            "路径不能跳出仓库：{f}",
+            "Path must not escape the repository: {f}",
+            f = f
+        ));
     }
     Ok(())
 }
@@ -1048,17 +1163,25 @@ fn current_branch(exe: &Path, repo: &Path) -> Option<String> {
 /// 提交选中的若干文件（相对仓库根、正斜杠）。返回新提交的短哈希与标题。
 pub fn commit(repo: &Path, files: &[String], message: &str) -> Result<CommitResult, String> {
     let exe = git_exe().ok_or_else(|| {
-        "未找到 git.exe，请先安装 Git for Windows 后重启本程序。".to_string()
+        crate::i18n::t(
+            "未找到 git.exe，请先安装 Git for Windows 后重启本程序。",
+            "git.exe not found. Install Git for Windows and restart this app.",
+        )
+        .to_string()
     })?;
     if !repo.join(".git").exists() {
-        return Err(format!("不是 Git 仓库：{}", repo.display()));
+        return Err(crate::tr!(
+            "不是 Git 仓库：{p}",
+            "Not a Git repository: {p}",
+            p = repo.display()
+        ));
     }
     let msg = message.trim();
     if msg.is_empty() {
-        return Err("提交信息不能为空".to_string());
+        return Err(crate::i18n::t("提交信息不能为空", "Commit message cannot be empty").to_string());
     }
     if files.is_empty() {
-        return Err("没有选中任何文件".to_string());
+        return Err(crate::i18n::t("没有选中任何文件", "No files selected").to_string());
     }
     for f in files {
         check_rel_path(f)?;
@@ -1071,9 +1194,9 @@ pub fn commit(repo: &Path, files: &[String], message: &str) -> Result<CommitResu
     if !out.status.success() {
         let err = stderr_text(&out);
         return Err(if err.is_empty() {
-            "git add 失败".to_string()
+            crate::i18n::t("git add 失败", "git add failed").to_string()
         } else {
-            format!("git add 失败：{err}")
+            crate::tr!("git add 失败：{err}", "git add failed: {err}", err = err)
         });
     }
 
@@ -1085,9 +1208,9 @@ pub fn commit(repo: &Path, files: &[String], message: &str) -> Result<CommitResu
     if !out.status.success() {
         let err = stderr_text(&out);
         return Err(if err.is_empty() {
-            "git commit 失败".to_string()
+            crate::i18n::t("git commit 失败", "git commit failed").to_string()
         } else {
-            format!("git commit 失败：{err}")
+            crate::tr!("git commit 失败：{err}", "git commit failed: {err}", err = err)
         });
     }
 
@@ -1109,14 +1232,26 @@ pub fn commit(repo: &Path, files: &[String], message: &str) -> Result<CommitResu
 /// 推送当前分支。没有 upstream 时自动 `git push -u <remote> <branch>`（origin 优先）。
 pub fn push(repo: &Path) -> Result<PushResult, String> {
     let exe = git_exe().ok_or_else(|| {
-        "未找到 git.exe，请先安装 Git for Windows 后重启本程序。".to_string()
+        crate::i18n::t(
+            "未找到 git.exe，请先安装 Git for Windows 后重启本程序。",
+            "git.exe not found. Install Git for Windows and restart this app.",
+        )
+        .to_string()
     })?;
     if !repo.join(".git").exists() {
-        return Err(format!("不是 Git 仓库：{}", repo.display()));
+        return Err(crate::tr!(
+            "不是 Git 仓库：{p}",
+            "Not a Git repository: {p}",
+            p = repo.display()
+        ));
     }
 
     let branch = current_branch(&exe, repo).ok_or_else(|| {
-        "当前处于 detached HEAD（不在任何分支上），先在命令行切回分支再推送".to_string()
+        crate::i18n::t(
+            "当前处于 detached HEAD（不在任何分支上），先在命令行切回分支再推送",
+            "HEAD is detached (not on any branch); switch to a branch before pushing",
+        )
+        .to_string()
     })?;
 
     let remotes_out = run_git(&exe, repo, &["remote"])?;
@@ -1126,7 +1261,11 @@ pub fn push(repo: &Path) -> Result<PushResult, String> {
         .filter(|l| !l.is_empty())
         .collect();
     if remotes.is_empty() {
-        return Err("这个仓库没有配置远程仓库（git remote 为空），没法推送".to_string());
+        return Err(crate::i18n::t(
+            "这个仓库没有配置远程仓库（git remote 为空），没法推送",
+            "This repository has no remote configured (git remote is empty); cannot push",
+        )
+        .to_string());
     }
 
     let upstream = run_git(
@@ -1162,16 +1301,34 @@ pub fn push(repo: &Path) -> Result<PushResult, String> {
         let mut hint = String::new();
         let low = err.to_lowercase();
         if low.contains("authentication") || low.contains("could not read username") || low.contains("permission denied") {
-            hint = "\n（看起来是凭据问题：先在命令行里 git push 一次把账号密码存下来，再回来重试）".to_string();
+            hint = crate::i18n::t(
+                "\n（看起来是凭据问题：先在命令行里 git push 一次把账号密码存下来，再回来重试）",
+                "\n(looks like a credentials problem: run git push once in a terminal to store them, then retry)",
+            )
+            .to_string();
         } else if low.contains("non-fast-forward") || low.contains("fetch first") || low.contains("rejected") {
-            hint = "\n（远程有新提交，本地落后了。先 git pull 或 git fetch 再推送）".to_string();
+            hint = crate::i18n::t(
+                "\n（远程有新提交，本地落后了。先 git pull 或 git fetch 再推送）",
+                "\n(the remote has newer commits and you are behind; run git pull or git fetch first)",
+            )
+            .to_string();
         } else if low.contains("no configured push destination") {
-            hint = "\n（这个分支没有配置上游，指定远程后再推：git push -u origin <branch>）".to_string();
+            hint = crate::i18n::t(
+                "\n（这个分支没有配置上游，指定远程后再推：git push -u origin <branch>）",
+                "\n(this branch has no upstream; set one first: git push -u origin <branch>)",
+            )
+            .to_string();
         }
         return Err(if err.is_empty() {
-            "git push 失败（没有任何输出）".to_string()
+            crate::i18n::t("git push 失败（没有任何输出）", "git push failed (no output)")
+                .to_string()
         } else {
-            format!("git push 失败：{err}{hint}")
+            crate::tr!(
+                "git push 失败：{err}{hint}",
+                "git push failed: {err}{hint}",
+                err = err,
+                hint = hint
+            )
         });
     }
 
@@ -1197,22 +1354,22 @@ pub fn push(repo: &Path) -> Result<PushResult, String> {
 fn describe_pull(text: &str) -> String {
     let low = text.to_lowercase();
     if low.contains("already up to date") || low.contains("already up-to-date") {
-        return "已是最新".to_string();
+        return crate::i18n::t("已是最新", "Already up to date").to_string();
     }
     if low.contains("fast-forward") {
-        return "已快进".to_string();
+        return crate::i18n::t("已快进", "Fast-forwarded").to_string();
     }
     if low.contains("merge made by") {
-        return "已合并远程提交".to_string();
+        return crate::i18n::t("已合并远程提交", "Merged the remote commits").to_string();
     }
     if low.contains("successfully rebased") || low.contains("fast-forwarded") {
-        return "已变基到远程".to_string();
+        return crate::i18n::t("已变基到远程", "Rebased onto the remote").to_string();
     }
     text.lines()
         .map(|l| l.trim())
         .filter(|l| !l.is_empty())
         .next_back()
-        .unwrap_or("完成")
+        .unwrap_or(crate::i18n::t("完成", "Done"))
         .to_string()
 }
 
@@ -1222,14 +1379,26 @@ fn describe_pull(text: &str) -> String {
 /// 而这里起的子进程没有终端，会一直等到超时。
 pub fn pull(repo: &Path) -> Result<PullResult, String> {
     let exe = git_exe().ok_or_else(|| {
-        "未找到 git.exe，请先安装 Git for Windows 后重启本程序。".to_string()
+        crate::i18n::t(
+            "未找到 git.exe，请先安装 Git for Windows 后重启本程序。",
+            "git.exe not found. Install Git for Windows and restart this app.",
+        )
+        .to_string()
     })?;
     if !repo.join(".git").exists() {
-        return Err(format!("不是 Git 仓库：{}", repo.display()));
+        return Err(crate::tr!(
+            "不是 Git 仓库：{p}",
+            "Not a Git repository: {p}",
+            p = repo.display()
+        ));
     }
 
     let branch = current_branch(&exe, repo).ok_or_else(|| {
-        "当前处于 detached HEAD（不在任何分支上），先在命令行切回分支再拉取".to_string()
+        crate::i18n::t(
+            "当前处于 detached HEAD（不在任何分支上），先在命令行切回分支再拉取",
+            "HEAD is detached (not on any branch); switch to a branch before pulling",
+        )
+        .to_string()
     })?;
 
     let remotes_out = run_git(&exe, repo, &["remote"])?;
@@ -1239,7 +1408,11 @@ pub fn pull(repo: &Path) -> Result<PullResult, String> {
         .filter(|l| !l.is_empty())
         .collect();
     if remotes.is_empty() {
-        return Err("这个仓库没有配置远程仓库（git remote 为空），没法拉取".to_string());
+        return Err(crate::i18n::t(
+            "这个仓库没有配置远程仓库（git remote 为空），没法拉取",
+            "This repository has no remote configured (git remote is empty); cannot pull",
+        )
+        .to_string());
     }
 
     let upstream = run_git(
@@ -1287,20 +1460,46 @@ pub fn pull(repo: &Path) -> Result<PullResult, String> {
             || low.contains("could not read username")
             || low.contains("permission denied")
         {
-            hint = "\n（看起来是凭据问题：先在命令行里 git pull 一次把账号密码存下来，再回来重试）".to_string();
+            hint = crate::i18n::t(
+                "\n（看起来是凭据问题：先在命令行里 git pull 一次把账号密码存下来，再回来重试）",
+                "\n(looks like a credentials problem: run git pull once in a terminal to store them, then retry)",
+            )
+            .to_string();
         } else if low.contains("conflict") || low.contains("automatic merge failed") {
-            hint = "\n（有冲突，需要到命令行里解决后再提交）".to_string();
+            hint = crate::i18n::t(
+                "\n（有冲突，需要到命令行里解决后再提交）",
+                "\n(there are conflicts; resolve them in a terminal and commit)",
+            )
+            .to_string();
         } else if low.contains("would be overwritten by merge") || low.contains("please commit your changes or stash") {
-            hint = "\n（本地有未提交的改动会被覆盖，先提交或 stash 再拉取）".to_string();
+            hint = crate::i18n::t(
+                "\n（本地有未提交的改动会被覆盖，先提交或 stash 再拉取）",
+                "\n(local uncommitted changes would be overwritten; commit or stash them first)",
+            )
+            .to_string();
         } else if low.contains("no tracking information") {
-            hint = "\n（这个分支没有上游，先 git branch --set-upstream-to=<remote>/<branch>）".to_string();
+            hint = crate::i18n::t(
+                "\n（这个分支没有上游，先 git branch --set-upstream-to=<remote>/<branch>）",
+                "\n(this branch has no upstream; run git branch --set-upstream-to=<remote>/<branch> first)",
+            )
+            .to_string();
         } else if low.contains("refusing to merge unrelated histories") {
-            hint = "\n（本地与远程没有共同祖先，需要用 git pull --allow-unrelated-histories）".to_string();
+            hint = crate::i18n::t(
+                "\n（本地与远程没有共同祖先，需要用 git pull --allow-unrelated-histories）",
+                "\n(local and remote share no history; run git pull --allow-unrelated-histories)",
+            )
+            .to_string();
         }
         return Err(if combined.is_empty() {
-            "git pull 失败（没有任何输出）".to_string()
+            crate::i18n::t("git pull 失败（没有任何输出）", "git pull failed (no output)")
+                .to_string()
         } else {
-            format!("git pull 失败：{combined}{hint}")
+            crate::tr!(
+                "git pull 失败：{combined}{hint}",
+                "git pull failed: {combined}{hint}",
+                combined = combined,
+                hint = hint
+            )
         });
     }
 
@@ -1348,7 +1547,11 @@ fn check_reset_mode(mode: &str) -> Result<&'static str, String> {
         "soft" => Ok("soft"),
         "mixed" => Ok("mixed"),
         "hard" => Ok("hard"),
-        other => Err(format!("不认识的回滚方式：{other}（只能是 soft / mixed / hard）")),
+        other => Err(crate::tr!(
+            "不认识的回滚方式：{other}（只能是 soft / mixed / hard）",
+            "Unknown reset mode: {other} (soft / mixed / hard)",
+            other = other
+        )),
     }
 }
 
@@ -1395,13 +1598,27 @@ fn dirty_count(exe: &Path, repo: &Path) -> usize {
 /// 只读：算出「回滚到某个提交会发生什么」，不动仓库。
 pub fn reset_plan(repo: &Path, hash: &str) -> Result<ResetPlan, String> {
     let exe = git_exe().ok_or_else(|| {
-        "未找到 git.exe，请先安装 Git for Windows 后重启本程序。".to_string()
+        crate::i18n::t(
+            "未找到 git.exe，请先安装 Git for Windows 后重启本程序。",
+            "git.exe not found. Install Git for Windows and restart this app.",
+        )
+        .to_string()
     })?;
     if !repo.join(".git").exists() {
-        return Err(format!("不是 Git 仓库：{}", repo.display()));
+        return Err(crate::tr!(
+            "不是 Git 仓库：{p}",
+            "Not a Git repository: {p}",
+            p = repo.display()
+        ));
     }
     let full = rev_parse_commit(&exe, repo, hash.trim())
-        .ok_or_else(|| format!("找不到这个提交：{hash}"))?;
+        .ok_or_else(|| {
+            crate::tr!(
+                "找不到这个提交：{hash}",
+                "Commit not found: {hash}",
+                hash = hash
+            )
+        })?;
     let short = run_git(&exe, repo, &["rev-parse", "--short", &full])
         .ok()
         .filter(|o| o.status.success())
@@ -1436,7 +1653,11 @@ pub fn reset_to(repo: &Path, hash: &str, mode: &str) -> Result<ResetResult, Stri
     let mode = check_reset_mode(mode)?;
     let plan = reset_plan(repo, hash)?;
     let exe = git_exe().ok_or_else(|| {
-        "未找到 git.exe，请先安装 Git for Windows 后重启本程序。".to_string()
+        crate::i18n::t(
+            "未找到 git.exe，请先安装 Git for Windows 后重启本程序。",
+            "git.exe not found. Install Git for Windows and restart this app.",
+        )
+        .to_string()
     })?;
 
     let arg = format!("--{mode}");
@@ -1448,8 +1669,17 @@ pub fn reset_to(repo: &Path, hash: &str, mode: &str) -> Result<ResetResult, Stri
     )?;
     if !out.status.success() {
         let err = stderr_text(&out);
-        let msg = if err.is_empty() { "（没有任何输出）".to_string() } else { err };
-        return Err(format!("git reset {arg} 失败：{msg}"));
+        let msg = if err.is_empty() {
+            crate::i18n::t("（没有任何输出）", "(no output)").to_string()
+        } else {
+            err
+        };
+        return Err(crate::tr!(
+            "git reset {arg} 失败：{msg}",
+            "git reset {arg} failed: {msg}",
+            arg = arg,
+            msg = msg
+        ));
     }
 
     Ok(ResetResult {
@@ -1461,6 +1691,11 @@ pub fn reset_to(repo: &Path, hash: &str, mode: &str) -> Result<ResetResult, Stri
         drop_commits: plan.drop_commits,
         dirty_dropped: if mode == "hard" { plan.dirty } else { 0 },
     })
+}
+
+/// 「命令」这个兜底词也要跟着语言走（timeout / 失败信息里会用到）。
+fn cmd_fallback() -> &'static str {
+    crate::i18n::t("命令", "command")
 }
 
 pub fn human_size(bytes: u64) -> String {
@@ -1500,9 +1735,18 @@ mod tests {
 
     #[test]
     fn pull_summary_picks_known_results() {
-        assert_eq!(describe_pull("Already up to date.\n"), "已是最新");
-        assert_eq!(describe_pull("Updating a1b2c3..d4e5f6\nFast-forward\n app.go | 2 +-"), "已快进");
-        assert_eq!(describe_pull("Merge made by the 'ort' strategy."), "已合并远程提交");
+        assert_eq!(
+            describe_pull("Already up to date.\n"),
+            crate::i18n::t("已是最新", "Already up to date")
+        );
+        assert_eq!(
+            describe_pull("Updating a1b2c3..d4e5f6\nFast-forward\n app.go | 2 +-"),
+            crate::i18n::t("已快进", "Fast-forwarded")
+        );
+        assert_eq!(
+            describe_pull("Merge made by the 'ort' strategy."),
+            crate::i18n::t("已合并远程提交", "Merged the remote commits")
+        );
         assert_eq!(describe_pull("line one\n  last line  \n\n"), "last line");
     }
 

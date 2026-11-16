@@ -66,26 +66,34 @@ pub fn find_in(dir: &Path) -> Option<PathBuf> {
 /// 读一个配置文件并校验。`rules` 是允许的规则名，用于校验 `skip` 的拼写。
 pub fn load(path: &Path, rules: &[&str]) -> Result<FileConfig, String> {
     let text = std::fs::read_to_string(path)
-        .map_err(|e| format!("读不到配置文件 {}：{e}", path.display()))?;
+        .map_err(|e| crate::tr!("读不到配置文件 {p}：{e}", "Cannot read config file {p}: {e}", p = path.display(), e = e))?;
     let raw: Raw = toml::from_str(&text).map_err(|e| {
-        format!(
-            "配置文件 {} 有错：{e}\n\
+        crate::tr!(
+            "配置文件 {p} 有错：{e}\n\
              支持的键：depth（1~16）、branch（字符串数组）、base（字符串）、\
              skip（字符串数组）、strict（true / false）",
-            path.display()
+            "Config file {p} is invalid: {e}\n\
+             Supported keys: depth (1-16), branch (array of strings), base (string), \
+             skip (array of strings), strict (true / false)",
+            p = path.display(),
+            e = e
         )
     })?;
 
     if let Some(d) = raw.depth {
         if !(1..=16).contains(&d) {
-            return Err(format!(
-                "配置文件 {}：depth 要在 1~16 之间，收到 {d}",
-                path.display()
+            return Err(crate::tr!(
+                "配置文件 {p}：depth 要在 1~16 之间，收到 {d}",
+                "Config file {p}: depth must be within 1-16, got {d}",
+                p = path.display(),
+                d = d
             ));
         }
     }
     if let Some(b) = &raw.base {
-        check_ref_like("base", b).map_err(|e| format!("配置文件 {}：{e}", path.display()))?;
+        check_ref_like("base", b).map_err(|e| {
+            crate::tr!("配置文件 {p}：{e}", "Config file {p}: {e}", p = path.display(), e = e)
+        })?;
     }
 
     let branch = match raw.branch {
@@ -96,8 +104,14 @@ pub fn load(path: &Path, rules: &[&str]) -> Result<FileConfig, String> {
                 if p.is_empty() {
                     continue;
                 }
-                check_ref_like("branch", &p)
-                    .map_err(|e| format!("配置文件 {}：{e}", path.display()))?;
+                check_ref_like("branch", &p).map_err(|e| {
+                    crate::tr!(
+                        "配置文件 {p}：{e}",
+                        "Config file {p}: {e}",
+                        p = path.display(),
+                        e = e
+                    )
+                })?;
                 push_unique(&mut out, p);
             }
             Some(out)
@@ -114,10 +128,12 @@ pub fn load(path: &Path, rules: &[&str]) -> Result<FileConfig, String> {
         // 拼错的规则名要当场报错：否则「以为跳过了、其实还在检查」，
         // 或者反过来「以为检查了、其实早就跳过」，两边都得对着 CI 排查半天。
         if !rules.iter().any(|r| r.eq_ignore_ascii_case(&s)) {
-            return Err(format!(
-                "配置文件 {}：不认识的规则 {s}\n可用的规则：{}",
-                path.display(),
-                rules.join(", ")
+            return Err(crate::tr!(
+                "配置文件 {p}：不认识的规则 {s}\n可用的规则：{list}",
+                "Config file {p}: unknown rule {s}\nAvailable rules: {list}",
+                p = path.display(),
+                s = s,
+                list = rules.join(", ")
             ));
         }
         push_unique(&mut skip, s);
@@ -203,10 +219,20 @@ impl Rules {
 /// 结论照样显示「通过」。假通过比假失败危险，所以入口就挡掉。
 pub fn check_ref_like(flag: &str, v: &str) -> Result<(), String> {
     if v.starts_with('-') {
-        return Err(format!("{flag} 的取值不能以 - 开头：{v}"));
+        return Err(crate::tr!(
+            "{flag} 的取值不能以 - 开头：{v}",
+            "{flag} must not start with -: {v}",
+            flag = flag,
+            v = v
+        ));
     }
     if v.chars().any(|c| c == '"' || c.is_control()) {
-        return Err(format!("{flag} 的取值不能包含引号或控制字符：{v}"));
+        return Err(crate::tr!(
+            "{flag} 的取值不能包含引号或控制字符：{v}",
+            "{flag} must not contain quotes or control characters: {v}",
+            flag = flag,
+            v = v
+        ));
     }
     Ok(())
 }
@@ -256,13 +282,16 @@ mod tests {
     #[test]
     fn rejects_unknown_key() {
         let err = load(&tmp("bad-key", "branchs = [\"main\"]\n"), RULES).unwrap_err();
-        assert!(err.contains("配置文件"), "{err}");
+        assert!(err.contains("配置文件") || err.contains("Config file"), "{err}");
     }
 
     #[test]
     fn rejects_unknown_rule_name() {
         let err = load(&tmp("bad-rule", "skip = [\"dirtyy\"]\n"), RULES).unwrap_err();
-        assert!(err.contains("不认识的规则"), "{err}");
+        assert!(
+            err.contains("不认识的规则") || err.contains("unknown rule"),
+            "{err}"
+        );
     }
 
     #[test]

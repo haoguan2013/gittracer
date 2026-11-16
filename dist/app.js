@@ -151,12 +151,12 @@ function hasTauri() {
 }
 
 async function invoke(cmd, args) {
-  if (!hasTauri()) throw new Error('当前不在桌面应用内运行（缺少 Tauri 宿主）');
+  if (!hasTauri()) throw new Error(t('当前不在桌面应用内运行（缺少 Tauri 宿主）'));
   return window.__TAURI_INTERNALS__.invoke(cmd, args || {});
 }
 
 function errText(e) {
-  if (!e) return '未知错误';
+  if (!e) return t('未知错误');
   if (typeof e === 'string') return e;
   if (e.message) return e.message;
   return String(e);
@@ -266,7 +266,7 @@ function renderRoots() {
           <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l1.8 2.2h7.2A1.5 1.5 0 0 1 19 9.7v7.8A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z"/>
         </svg>
         <span class="chip-name">${esc(baseName(root))}</span>${count}
-        <button class="chip-x" data-remove="${esc(root)}" title="移除这个目录">×</button>
+        <button class="chip-x" data-remove="${esc(root)}" title="${t('移除这个目录')}">×</button>
       </span>`;
     })
     .join('');
@@ -278,7 +278,7 @@ function addRoot(raw) {
   const p = trimRoot(raw);
   if (!p) return false;
   if (state.roots.some((r) => pathKey(r) === pathKey(p))) {
-    toast('这个目录已经在列表里了');
+    toast(t('这个目录已经在列表里了'));
     return false;
   }
   state.roots.push(p);
@@ -314,16 +314,16 @@ function removeRoot(p) {
     renderCommitBar();
     renderDiffHead();
     renderDiffBody();
-    els.statusLeft.textContent = '就绪';
+    els.statusLeft.textContent = t('就绪');
   }
 }
 
 /* ---------- 渲染：统计条 ---------- */
 function renderStats() {
   if (!state.scan) {
-    els.statRepos.innerHTML = '<b>—</b> 个仓库';
-    els.statDirty.innerHTML = '<b>—</b> 个有变更';
-    els.statFiles.innerHTML = '<b>—</b> 处变更';
+    els.statRepos.innerHTML = '<b>—</b> ' + t('个仓库');
+    els.statDirty.innerHTML = '<b>—</b> ' + t('个有变更');
+    els.statFiles.innerHTML = '<b>—</b> ' + t('处变更');
     els.statTime.textContent = '';
     renderPushEntry();
     renderRoots();
@@ -340,15 +340,18 @@ function renderStats() {
       files += n;
     }
   }
-  els.statRepos.innerHTML = `<b>${repos.length}</b> 个仓库`;
-  els.statDirty.innerHTML = `<b>${dirty}</b> 个有变更`;
-  els.statFiles.innerHTML = `<b>${files}</b> 处变更`;
+  els.statRepos.innerHTML = `<b>${repos.length}</b> ${t('个仓库')}`;
+  els.statDirty.innerHTML = `<b>${dirty}</b> ${t('个有变更')}`;
+  els.statFiles.innerHTML = `<b>${files}</b> ${t('处变更')}`;
   els.statDirty.classList.toggle('hot', dirty > 0);
   const bits = [];
-  if (state.roots.length > 1) bits.push(`${state.roots.length} 个根目录`);
-  bits.push(`扫描 ${state.scan.dirs} 个目录 · ${fmtMs(state.scan.elapsed_ms)}`);
-  if (state.scan.truncated) bits.push('已达仓库数量上限');
-  if (state.scan.errors.length) bits.push(`${state.scan.errors.length} 个目录无权限`);
+  if (state.roots.length > 1) bits.push(`${state.roots.length} ${t('个根目录')}`);
+  bits.push(
+    `${t('已扫描')} ${state.scan.dirs} ${t('个目录')} · ${fmtMs(state.scan.elapsed_ms)}`
+  );
+  if (state.scan.truncated) bits.push(t('已达仓库数量上限'));
+  if (state.scan.errors.length)
+    bits.push(`${state.scan.errors.length} ${t('个目录无权限')}`);
   els.statTime.textContent = bits.join(' · ');
   renderPushEntry();
   renderRoots();
@@ -378,22 +381,48 @@ function renderPushEntry() {
 /* ---------- 渲染：仓库列表 ---------- */
 function repoBadges(st) {
   if (!st) return '';
-  if (st.error) return '<span class="badge err" title="读取失败">!</span>';
+  if (st.error)
+    return `<span class="badge err" title="${t('读取失败')}">!</span>`;
   const ahead =
     st.ahead > 0
-      ? `<span class="badge ahead" title="本地有 ${st.ahead} 个提交还没推送">↑${st.ahead}</span>`
+      ? `<span class="badge ahead" title="${t('本地有 {n} 个提交还没推送', {
+          n: st.ahead,
+        })}">↑${st.ahead}</span>`
       : '';
   const behind =
     st.behind > 0
-      ? `<span class="badge behind" title="远程有 ${st.behind} 个提交还没拉取">↓${st.behind}</span>`
+      ? `<span class="badge behind" title="${t('远程有 {n} 个提交还没拉取', {
+          n: st.behind,
+        })}">↓${st.behind}</span>`
       : '';
   const n = changedCount(st);
-  if (n === 0) return `${ahead}${behind}<span class="badge ok">干净</span>`;
+  if (n === 0)
+    return `${ahead}${behind}<span class="badge ok">${t('干净')}</span>`;
   const parts = [];
-  if (st.staged) parts.push(`<span class="badge s" title="已暂存 ${st.staged} 个文件">${st.staged}</span>`);
-  if (st.unstaged) parts.push(`<span class="badge u" title="未暂存 ${st.unstaged} 个文件">${st.unstaged}</span>`);
-  if (st.untracked) parts.push(`<span class="badge n" title="未跟踪 ${st.untracked} 个文件">${st.untracked}</span>`);
-  if (st.conflicted) parts.push(`<span class="badge c" title="冲突 ${st.conflicted} 个文件">${st.conflicted}</span>`);
+  if (st.staged)
+    parts.push(
+      `<span class="badge s" title="${t('已暂存 {n} 个文件', {
+        n: st.staged,
+      })}">${st.staged}</span>`
+    );
+  if (st.unstaged)
+    parts.push(
+      `<span class="badge u" title="${t('未暂存 {n} 个文件', {
+        n: st.unstaged,
+      })}">${st.unstaged}</span>`
+    );
+  if (st.untracked)
+    parts.push(
+      `<span class="badge n" title="${t('未跟踪 {n} 个文件', {
+        n: st.untracked,
+      })}">${st.untracked}</span>`
+    );
+  if (st.conflicted)
+    parts.push(
+      `<span class="badge c" title="${t('冲突 {n} 个文件', {
+        n: st.conflicted,
+      })}">${st.conflicted}</span>`
+    );
   return ahead + behind + parts.join('');
 }
 
@@ -423,17 +452,17 @@ function visibleRepos() {
 
 function renderRepoList() {
   const list = visibleRepos();
-  els.repoCount.textContent = `${list.length} 个仓库`;
+  els.repoCount.textContent = `${list.length} ${t('个仓库')}`;
 
   if (!state.repos.length) {
     const scanned = !!state.scan;
     els.repoList.innerHTML = `<li class="empty-item"><div class="empty" style="min-height:240px">
-      <h3>${scanned ? '没找到 Git 仓库' : '还没有扫描结果'}</h3></div></li>`;
+      <h3>${scanned ? t('没找到 Git 仓库') : t('还没有扫描结果')}</h3></div></li>`;
     return;
   }
   if (!list.length) {
     els.repoList.innerHTML = `<li class="empty-item"><div class="empty" style="min-height:200px">
-      <h3>没有匹配的仓库</h3></div></li>`;
+      <h3>${t('没有匹配的仓库')}</h3></div></li>`;
     return;
   }
 
@@ -442,7 +471,10 @@ function renderRepoList() {
     const n = changedCount(st);
     const branch = st && !st.error && st.branch ? `<span class="branch">${esc(st.branch)}</span>` : '';
     // .git 是文件而不是目录：说明这是 git worktree 或者子模块
-    const wt = ref.kind === 'worktree' ? '<span class="wt" title=".git 是文件：worktree 或子模块">worktree</span>' : '';
+    const wt =
+      ref.kind === 'worktree'
+        ? `<span class="wt" title="${t('.git 是文件：worktree 或子模块')}">worktree</span>`
+        : '';
     const clean = st && !st.error && n === 0 ? ' clean' : '';
     const active = state.selectedRepo === ref.path ? ' active' : '';
     const counts = pending
@@ -457,7 +489,11 @@ function renderRepoList() {
     return `<li class="repo-row${n > 0 ? ' dirty' : ''}${clean}${active}" data-path="${esc(ref.path)}" title="${esc(nicePath(ref.path))}">
       <div class="repo-main">
         <div class="repo-title"><span class="repo-name">${esc(ref.name)}</span>${branch}${wt}</div>
-        <div class="repo-sub">${rootTag}${esc(sub)}${st && st.error ? ' · <span style="color:#ff9a94">读取失败</span>' : ''}</div>
+        <div class="repo-sub">${rootTag}${esc(sub)}${
+          st && st.error
+            ? ` · <span style="color:#ff9a94">${t('读取失败')}</span>`
+            : ''
+        }</div>
       </div>
       <div class="repo-counts">${counts}</div>
     </li>`;
@@ -475,25 +511,25 @@ function renderRepoHead() {
   const ref = state.repos.find((r) => r.path === path);
 
   if (!path) {
-    els.repoHead.innerHTML = '<span class="pane-title">文件</span>';
+    els.repoHead.innerHTML = `<span class="pane-title">${t('文件')}</span>`;
     return;
   }
   if (!st) {
-    els.repoHead.innerHTML = `<span class="pane-title">文件</span><span class="grow"></span>
+    els.repoHead.innerHTML = `<span class="pane-title">${t('文件')}</span><span class="grow"></span>
       <span style="display:flex;gap:8px;align-items:center;color:var(--dim);font-size:12px">
-        <span class="spinner"></span> 读取中…</span>`;
+        <span class="spinner"></span> ${t('读取中…')}</span>`;
     return;
   }
   if (st.error) {
-    els.repoHead.innerHTML = `<span class="pane-title">文件</span><span class="grow"></span>
-      <span style="color:#ff9a94;font-size:12px">读取失败</span>`;
+    els.repoHead.innerHTML = `<span class="pane-title">${t('文件')}</span><span class="grow"></span>
+      <span style="color:#ff9a94;font-size:12px">${t('读取失败')}</span>`;
     return;
   }
 
   const bits = [];
   if (st.branch) bits.push(esc(st.branch));
   else if (st.detached) bits.push('detached');
-  else if (st.initial) bits.push('尚无提交');
+  else if (st.initial) bits.push(t('尚无提交'));
   if (st.ahead) bits.push(`↑${st.ahead}`);
   if (st.behind) bits.push(`↓${st.behind}`);
   if (st.stashes) bits.push(`stash ${st.stashes}`);
@@ -504,10 +540,14 @@ function renderRepoHead() {
     </span>
     <span class="repo-bits">${bits.join(' ')}</span>
     <span class="grow"></span>
-    <button class="btn small ghost" id="copyRepoBtn" title="复制仓库路径">复制路径</button>
-    <button class="btn small ghost" id="revealRepoBtn" title="在资源管理器中打开">打开目录</button>`;
+    <button class="btn small ghost" id="copyRepoBtn" title="${t('复制仓库路径')}">${t(
+      '复制路径'
+    )}</button>
+    <button class="btn small ghost" id="revealRepoBtn" title="${t(
+      '在资源管理器中打开'
+    )}">${t('打开目录')}</button>`;
 
-  $('copyRepoBtn').onclick = () => copyText(path, '仓库路径已复制');
+  $('copyRepoBtn').onclick = () => copyText(path, t('仓库路径已复制'));
   $('revealRepoBtn').onclick = () => invoke('reveal_path', { path }).catch((e) => toast(errText(e), true));
 }
 
@@ -515,10 +555,10 @@ function renderRepoHead() {
 function groupsOf(st) {
   const entries = st.entries || [];
   const g = [
-    { key: 'conflicted', label: '冲突', color: 'var(--conflict)', items: entries.filter((e) => e.conflicted) },
-    { key: 'staged', label: '已暂存', color: 'var(--mod)', items: entries.filter((e) => e.staged && !e.conflicted) },
-    { key: 'unstaged', label: '未暂存', color: 'var(--accent)', items: entries.filter((e) => e.unstaged && !e.conflicted) },
-    { key: 'untracked', label: '未跟踪', color: 'var(--new)', items: entries.filter((e) => e.untracked) },
+    { key: 'conflicted', label: t('冲突'), color: 'var(--conflict)', items: entries.filter((e) => e.conflicted) },
+    { key: 'staged', label: t('已暂存'), color: 'var(--mod)', items: entries.filter((e) => e.staged && !e.conflicted) },
+    { key: 'unstaged', label: t('未暂存'), color: 'var(--accent)', items: entries.filter((e) => e.unstaged && !e.conflicted) },
+    { key: 'untracked', label: t('未跟踪'), color: 'var(--new)', items: entries.filter((e) => e.untracked) },
   ];
   return g.filter((x) => x.items.length);
 }
@@ -554,22 +594,24 @@ function renderFileList() {
 
   if (!path) {
     els.fileList.innerHTML = `<div class="empty" style="min-height:260px">
-      <h3>未选择仓库</h3></div>`;
+      <h3>${t('未选择仓库')}</h3></div>`;
     return;
   }
   if (!st) {
     els.fileList.innerHTML = `<div class="empty" style="min-height:260px"><span class="spinner"></span>
-      <p>正在读取 git status…</p></div>`;
+      <p>${t('正在读取 git status…')}</p></div>`;
     return;
   }
   if (st.error) {
-    els.fileList.innerHTML = `<div class="notice">读取失败：${esc(st.error)}</div>`;
+    els.fileList.innerHTML = `<div class="notice">${t('读取失败：{e}', {
+      e: esc(st.error),
+    })}</div>`;
     return;
   }
   const groups = groupsOf(st);
   if (!groups.length) {
     els.fileList.innerHTML = `<div class="empty" style="min-height:260px">
-      <h3>工作区干净</h3></div>`;
+      <h3>${t('工作区干净')}</h3></div>`;
     return;
   }
 
@@ -593,13 +635,15 @@ function renderFileList() {
             }${e.deletions != null ? `<span class="d">-${e.deletions}</span>` : ''}</span>`
           : '';
       html += `<div class="file-row${active}${on ? ' picked' : ''}" data-key="${esc(fileKey(view))}" data-path="${esc(e.path)}" title="${esc(e.path)}">
-        <span class="pick${on ? ' on' : ''}" role="checkbox" aria-checked="${on}" title="勾选后可一起提交（空格键切换）"></span>
-        <span class="st ${info.cls}" title="${info.label}">${info.text}</span>
+        <span class="pick${on ? ' on' : ''}" role="checkbox" aria-checked="${on}" title="${t(
+          '勾选后可一起提交（空格键切换）'
+        )}"></span>
+        <span class="st ${info.cls}" title="${t(info.label)}">${info.text}</span>
         ${pathHtml(e.path, 'file-path')}
         ${num}
       </div>`;
       if (e.orig) {
-        html += `<div class="file-rename" title="原路径">← ${esc(e.orig)}</div>`;
+        html += `<div class="file-rename" title="${t('原路径')}">← ${esc(e.orig)}</div>`;
       }
     }
   }
@@ -640,7 +684,14 @@ function renderUnified(text) {
     const line = lines[i];
     if (i === lines.length - 1 && line === '') break;
     if (shown >= MAX_LIST_ROWS) {
-      out.push(diffMetaRow(`… 差异超过 ${MAX_LIST_ROWS} 行，其余 ${lines.length - i} 行未渲染（可在此文件上用命令行查看）`));
+      out.push(
+        diffMetaRow(
+          t('… 差异超过 {max} 行，其余 {rest} 行未渲染（可在此文件上用命令行查看）', {
+            max: MAX_LIST_ROWS,
+            rest: lines.length - i,
+          })
+        )
+      );
       break;
     }
     shown += 1;
@@ -699,7 +750,14 @@ function renderPlain(text) {
   const n = Math.min(lines.length, MAX_LIST_ROWS);
   for (let i = 0; i < n; i++) out.push(diffRow('add', '', i + 1, lines[i], '+'));
   if (lines.length > MAX_LIST_ROWS) {
-    out.push(diffMetaRow(`… 文件超过 ${MAX_LIST_ROWS} 行，其余 ${lines.length - MAX_LIST_ROWS} 行未渲染`));
+    out.push(
+    diffMetaRow(
+      t('… 文件超过 {max} 行，其余 {rest} 行未渲染', {
+        max: MAX_LIST_ROWS,
+        rest: lines.length - MAX_LIST_ROWS,
+      })
+    )
+  );
   }
   return `<div class="diff">${out.join('')}</div>`;
 }
@@ -711,8 +769,8 @@ function emptyBlock(title, desc, extra) {
 }
 
 function renderViewTabs() {
-  els.viewTabs.querySelectorAll('.tab').forEach((t) => {
-    t.classList.toggle('on', t.dataset.view === state.view);
+  els.viewTabs.querySelectorAll('.tab').forEach((tab) => {
+    tab.classList.toggle('on', tab.dataset.view === state.view);
   });
 }
 
@@ -736,11 +794,17 @@ function renderDiffHead() {
             <circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.5 15.5 21 21" stroke-linecap="round" />
           </svg>
           <input id="graphSearch" type="text" spellcheck="false" autocomplete="off"
-            placeholder="搜索提交 / 作者 / 分支" value="${esc(state.graphSearch)}" />
-          <button class="g-clear" id="graphClear" title="清空搜索"${state.graphSearch ? '' : ' hidden'}>×</button>
+            placeholder="${t('搜索提交 / 作者 / 分支')}" value="${esc(state.graphSearch)}" />
+          <button class="g-clear" id="graphClear" title="${t('清空搜索')}"${
+      state.graphSearch ? '' : ' hidden'
+    }>×</button>
         </div>`
       : '';
-    const btn = state.selectedRepo ? '<span class="actions"><button class="btn small ghost" id="graphRefreshBtn">刷新</button></span>' : '';
+    const btn = state.selectedRepo
+      ? `<span class="actions"><button class="btn small ghost" id="graphRefreshBtn">${t(
+          '刷新'
+        )}</button></span>`
+      : '';
     els.diffHead.innerHTML = `${br}${search}<span class="grow"></span>${btn}`;
     const inp = $('graphSearch');
     if (inp) {
@@ -796,30 +860,30 @@ function renderDiffHead() {
       <span class="commit-subject" title="${esc(c.subject)}">${esc(c.subject)}</span>
       <span class="grow"></span>
       <span class="actions">
-        <button class="btn small danger" id="resetBtn">回滚至此处</button>
-        <button class="btn small ghost" id="copyHashBtn">复制哈希</button>
-        <button class="btn small ghost" id="backToGraphBtn">返回分支树</button>
+        <button class="btn small danger" id="resetBtn">${t('回滚至此处')}</button>
+        <button class="btn small ghost" id="copyHashBtn">${t('复制哈希')}</button>
+        <button class="btn small ghost" id="backToGraphBtn">${t('返回分支树')}</button>
       </span>`;
-    $('copyHashBtn').onclick = () => copyText(c.hash, '提交哈希已复制');
+    $('copyHashBtn').onclick = () => copyText(c.hash, t('提交哈希已复制'));
     $('resetBtn').onclick = () => openResetDialog();
     $('backToGraphBtn').onclick = () => switchView('graph');
     return;
   }
   const f = state.file;
   if (!f) {
-    els.diffHead.innerHTML = '<span class="pane-title">差异</span>';
+    els.diffHead.innerHTML = `<span class="pane-title">${t('差异')}</span>`;
     return;
   }
   const info = CODE[f.code] || CODE.X;
   els.diffHead.innerHTML = `
-    <span class="st ${info.cls}" title="${info.label}">${info.text}</span>
+    <span class="st ${info.cls}" title="${t(info.label)}">${info.text}</span>
     ${pathHtml(f.path, 'path')}
     <span class="grow"></span>
     <span class="actions">
-      <button class="btn small ghost" id="copyFileBtn">复制路径</button>
-      <button class="btn small ghost" id="revealFileBtn">定位文件</button>
+      <button class="btn small ghost" id="copyFileBtn">${t('复制路径')}</button>
+      <button class="btn small ghost" id="revealFileBtn">${t('定位文件')}</button>
     </span>`;
-  $('copyFileBtn').onclick = () => copyText(f.path, '文件路径已复制');
+  $('copyFileBtn').onclick = () => copyText(f.path, t('文件路径已复制'));
   $('revealFileBtn').onclick = () => {
     const full = `${state.selectedRepo.replace(/[\\/]+$/, '')}\\${f.path.replace(/\//g, '\\')}`;
     invoke('reveal_path', { path: full }).catch((e) => toast(errText(e), true));
@@ -833,7 +897,11 @@ function renderDiffBody() {
     const chips = recents()
       .map((r) => `<span class="chip" data-root="${esc(r)}" title="${esc(r)}">${esc(r)}</span>`)
       .join('');
-    els.diffBody.innerHTML = emptyBlock('开始扫描', '', chips ? `<div class="quick">${chips}</div>` : '');
+    els.diffBody.innerHTML = emptyBlock(
+      t('开始扫描'),
+      '',
+      chips ? `<div class="quick">${chips}</div>` : ''
+    );
     els.diffBody.querySelectorAll('.chip').forEach((chip) => {
       chip.onclick = () => {
         addRoot(chip.dataset.root);
@@ -844,29 +912,33 @@ function renderDiffBody() {
   if (!state.file) {
     const st = state.status.get(state.selectedRepo);
     if (st && !st.error && !groupsOf(st).length) {
-      els.diffBody.innerHTML = emptyBlock('工作区干净');
+      els.diffBody.innerHTML = emptyBlock(t('工作区干净'));
     } else {
-      els.diffBody.innerHTML = emptyBlock('选择一个文件');
+      els.diffBody.innerHTML = emptyBlock(t('选择一个文件'));
     }
     return;
   }
   const d = state.diff;
   if (!d || d.loading) {
-    els.diffBody.innerHTML = `<div class="empty"><span class="spinner"></span><p>正在读取差异…</p></div>`;
+    els.diffBody.innerHTML = `<div class="empty"><span class="spinner"></span><p>${t(
+      '正在读取差异…'
+    )}</p></div>`;
     return;
   }
   if (d.error) {
-    els.diffBody.innerHTML = `<div class="notice">读取差异失败：${esc(d.error)}</div>`;
+    els.diffBody.innerHTML = `<div class="notice">${t('读取差异失败：{e}', {
+      e: esc(d.error),
+    })}</div>`;
     return;
   }
   const data = d.data;
   els.diffBody.scrollTop = 0;
   if (data.kind === 'binary') {
-    els.diffBody.innerHTML = emptyBlock('二进制文件');
+    els.diffBody.innerHTML = emptyBlock(t('二进制文件'));
   } else if (data.kind === 'too_large') {
-    els.diffBody.innerHTML = emptyBlock('文件过大');
+    els.diffBody.innerHTML = emptyBlock(t('文件过大'));
   } else if (data.kind === 'empty') {
-    els.diffBody.innerHTML = emptyBlock('没有差异');
+    els.diffBody.innerHTML = emptyBlock(t('没有差异'));
   } else if (data.kind === 'text') {
     els.diffBody.innerHTML = renderPlain(data.text || '');
   } else {
@@ -1116,7 +1188,7 @@ function focusGraphSearch() {
 
 function renderGraph() {
   if (!state.selectedRepo) {
-    els.diffBody.innerHTML = emptyBlock('选择一个仓库');
+    els.diffBody.innerHTML = emptyBlock(t('选择一个仓库'));
     return;
   }
   const g = state.graph;
@@ -1125,12 +1197,14 @@ function renderGraph() {
     return;
   }
   if (g.error) {
-    els.diffBody.innerHTML = `<div class="notice">读取失败：${esc(g.error)}</div>`;
+    els.diffBody.innerHTML = `<div class="notice">${t('读取失败：{e}', {
+      e: esc(g.error),
+    })}</div>`;
     return;
   }
   const data = g.data;
   if (!data.commits.length) {
-    els.diffBody.innerHTML = emptyBlock('还没有提交');
+    els.diffBody.innerHTML = emptyBlock(t('还没有提交'));
     return;
   }
 
@@ -1140,13 +1214,18 @@ function renderGraph() {
     const hits = searchCommits(data.commits, q);
     if (!hits.length) {
       els.diffBody.innerHTML = `<div class="graph flat">
-        <div class="flat-bar">没有匹配「${esc(q)}」的提交</div>
-        <div class="empty"><h3>换个词试试</h3><p>可以搜提交标题、作者、分支或标签名，多个词用空格分开。</p></div>
+        <div class="flat-bar">${t('没有匹配「{q}」的提交', { q: esc(q) })}</div>
+        <div class="empty"><h3>${t('换个词试试')}</h3><p>${t(
+          '可以搜提交标题、作者、分支或标签名，多个词用空格分开。'
+        )}</p></div>
       </div>`;
       return;
     }
     els.diffBody.innerHTML = `<div class="graph flat">
-      <div class="flat-bar">${hits.length} 个提交匹配「${esc(q)}」</div>
+      <div class="flat-bar">${t('{n} 个提交匹配「{q}」', {
+        n: hits.length,
+        q: esc(q),
+      })}</div>
       <div class="graph-rows">${hits.map((h) => graphRowHtml({ c: h.c }, h)).join('')}</div>
     </div>`;
     return;
@@ -1157,7 +1236,9 @@ function renderGraph() {
   const width = maxLane * G_LANE_W;
   const height = rows.length * G_ROW_H;
   const more = data.truncated
-    ? `<div class="graph-more" style="margin-left:${width}px">只显示最近 ${data.commits.length} 个提交</div>`
+    ? `<div class="graph-more" style="margin-left:${width}px">${t('只显示最近 {n} 个提交', {
+        n: data.commits.length,
+      })}</div>`
     : '';
   els.diffBody.innerHTML = `<div class="graph">
       <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${graphSvg(rows, maxLane)}</svg>
@@ -1217,17 +1298,19 @@ function renderCommitDiff() {
     return;
   }
   if (d.error) {
-    els.diffBody.innerHTML = `<div class="notice">读取失败：${esc(d.error)}</div>`;
+    els.diffBody.innerHTML = `<div class="notice">${t('读取失败：{e}', {
+      e: esc(d.error),
+    })}</div>`;
     return;
   }
   const data = d.data;
   els.diffBody.scrollTop = 0;
   if (data.kind === 'binary') {
-    els.diffBody.innerHTML = emptyBlock('二进制改动', esc(data.message || ''));
+    els.diffBody.innerHTML = emptyBlock(t('二进制改动'), esc(data.message || ''));
   } else if (data.kind === 'too_large') {
-    els.diffBody.innerHTML = emptyBlock('改动太大', esc(data.message || ''));
+    els.diffBody.innerHTML = emptyBlock(t('改动太大'), esc(data.message || ''));
   } else if (data.kind === 'empty') {
-    els.diffBody.innerHTML = emptyBlock('没有内容变化', esc(data.message || ''));
+    els.diffBody.innerHTML = emptyBlock(t('没有内容变化'), esc(data.message || ''));
   } else {
     els.diffBody.innerHTML = renderUnified(data.text || '');
   }
@@ -1256,47 +1339,55 @@ async function openResetDialog() {
   try {
     plan = await invoke('reset_plan', { path: repo, hash: c.hash });
   } catch (e) {
-    return showError('读不到回滚信息', errText(e));
+    return showError(t('读不到回滚信息'), errText(e));
   }
 
   const from = plan.head ? esc(plan.head) : 'HEAD';
   const to = esc(plan.short);
   const where = plan.detached
-    ? 'detached HEAD（不在任何分支上）'
-    : `分支 <span class="code">${esc(plan.branch || '')}</span>`;
+    ? t('detached HEAD（不在任何分支上）')
+    : t('分支 {name}', { name: `<span class="code">${esc(plan.branch || '')}</span>` });
 
   const facts = [];
-  if (plan.drop_commits) facts.push(`撤销 <b>${plan.drop_commits}</b> 个提交`);
-  if (plan.gain_commits) facts.push(`这个提交上有 <b>${plan.gain_commits}</b> 个提交不在当前分支里`);
-  if (plan.dirty) facts.push(`还有 <b>${plan.dirty}</b> 处未提交的改动`);
+  if (plan.drop_commits) facts.push(t('撤销 {n} 个提交', { n: `<b>${plan.drop_commits}</b>` }));
+  if (plan.gain_commits) {
+    facts.push(t('这个提交上有 {n} 个提交不在当前分支里', { n: `<b>${plan.gain_commits}</b>` }));
+  }
+  if (plan.dirty) facts.push(t('还有 {n} 处未提交的改动', { n: `<b>${plan.dirty}</b>` }));
 
   const opts = Object.keys(RESET_MODES)
     .map(
       (k) => `<label class="reset-opt">
         <input type="radio" name="resetMode" value="${k}"${k === 'mixed' ? ' checked' : ''} />
-        <span><b>${RESET_MODES[k]}</b>${RESET_HELP[k]}</span>
+        <span><b>${t(RESET_MODES[k])}</b>${t(RESET_HELP[k])}</span>
       </label>`,
     )
     .join('');
 
   const html = `
-    <p class="dim">${where} 从 <span class="code">${from}</span> 退到
-      <span class="code">${to}</span>「${esc(plan.subject)}」</p>
+    <p class="dim">${t('{where} 从 {from} 退到 {to}「{subject}」', {
+      where,
+      from: `<span class="code">${from}</span>`,
+      to: `<span class="code">${to}</span>`,
+      subject: esc(plan.subject),
+    })}</p>
     ${
       plan.short === plan.head
-        ? '<p class="dim">目标就是当前提交，只会按所选方式处理下面这些未提交改动。</p>'
+        ? `<p class="dim">${t('目标就是当前提交，只会按所选方式处理下面这些未提交改动。')}</p>`
         : ''
     }
     ${facts.length ? `<p class="dim">${facts.join(' · ')}</p>` : ''}
     <div class="reset-opts">${opts}</div>
-    <p class="reset-warn">撤销掉的提交只留在 reflog 里，本程序不提供撤销；未跟踪的新文件不会删除。</p>
+    <p class="reset-warn">${t(
+      '撤销掉的提交只留在 reflog 里，本程序不提供撤销；未跟踪的新文件不会删除。'
+    )}</p>
     <label class="reset-confirm" id="resetConfirmWrap" hidden>
-      <input type="checkbox" id="resetConfirm" /> 我确认这些未提交改动会被丢弃
+      <input type="checkbox" id="resetConfirm" /> ${t('我确认这些未提交改动会被丢弃')}
     </label>`;
 
   const answer = askModal({
-    title: '回滚到这个提交？',
-    okText: '回滚',
+    title: t('回滚到这个提交？'),
+    okText: t('回滚'),
     html,
   });
 
@@ -1330,11 +1421,19 @@ async function openResetDialog() {
     await refreshRepo(repo);
     switchView('graph');
     loadGraph(true);
-    toast(`已回滚至 ${res.short}（${RESET_MODES[mode] || mode}）`);
-    const extra = res.drop_commits ? ` · 撤销 ${res.drop_commits} 个提交` : '';
-    els.statusLeft.innerHTML = `回滚完成 · ${esc(res.branch || 'detached')} → ${esc(res.short)}${extra}`;
+    toast(
+      t('已回滚至 {short}（{mode}）', {
+        short: res.short,
+        mode: t(RESET_MODES[mode] || mode),
+      })
+    );
+    const extra = res.drop_commits ? t(' · 撤销 {n} 个提交', { n: res.drop_commits }) : '';
+    els.statusLeft.innerHTML = `${t('回滚完成 · {branch} → {short}', {
+      branch: esc(res.branch || 'detached'),
+      short: esc(res.short),
+    })}${extra}`;
   } catch (e) {
-    showError('回滚失败', errText(e));
+    showError(t('回滚失败'), errText(e));
   } finally {
     state.busy = false;
     renderCommitBar();
@@ -1432,9 +1531,9 @@ async function copyText(text, okMsg) {
       document.execCommand('copy');
       ta.remove();
     }
-    toast(okMsg || '已复制');
+    toast(okMsg || t('已复制'));
   } catch (e) {
-    toast(`复制失败：${errText(e)}`, true);
+    toast(t('复制失败：{e}', { e: errText(e) }), true);
   }
 }
 
@@ -1455,9 +1554,9 @@ function askModal({ title, html, okText, cancelText, showCancel, focus, wide }) 
     modalDone = resolve;
     els.modalTitle.textContent = title || '';
     els.modalBody.innerHTML = html || '';
-    els.modalOk.textContent = okText || '确定';
+    els.modalOk.textContent = okText || t('确定');
     els.modalOk.disabled = false;
-    els.modalCancel.textContent = cancelText || '取消';
+    els.modalCancel.textContent = cancelText || t('取消');
     els.modalCancel.hidden = showCancel === false;
     const box = els.modalWrap.querySelector('.modal');
     if (box) box.classList.toggle('wide', !!wide);
@@ -1479,8 +1578,8 @@ function askModal({ title, html, okText, cancelText, showCancel, focus, wide }) 
 function showError(title, text) {
   return askModal({
     title,
-    html: `<div class="raw">${esc(text || '（没有任何输出）')}</div>`,
-    okText: '知道了',
+    html: `<div class="raw">${esc(text || t('（没有任何输出）'))}</div>`,
+    okText: t('知道了'),
     showCancel: false,
   });
 }
@@ -1504,13 +1603,16 @@ function renderCommitBar() {
 
   const n = state.checked.size;
   const total = distinctCount(st);
-  const branch = st && !st.error ? st.branch || (st.detached ? 'detached' : st.initial ? '尚无提交' : '') : '';
+  const branch =
+    st && !st.error
+      ? st.branch || (st.detached ? 'detached' : st.initial ? t('尚无提交') : '')
+      : '';
   let text;
-  if (!path) text = '未选择仓库';
-  else if (!st) text = '读取中…';
-  else if (st.error) text = '读取失败';
+  if (!path) text = t('未选择仓库');
+  else if (!st) text = t('读取中…');
+  else if (st.error) text = t('读取失败');
   else {
-    text = `已选 <b>${n}</b> / ${total} 个文件`;
+    text = t('已选 {n} / {total} 个文件', { n: `<b>${n}</b>`, total });
     if (branch) text += ` · ${esc(branch)}`;
     if (st.ahead) text += ` · <span style="color:var(--mod)">↑${st.ahead}</span>`;
   }
@@ -1519,44 +1621,50 @@ function renderCommitBar() {
   const canWrite = !!(path && st && !st.error);
   const hasRemote = canWrite && (st.remotes || []).length > 0;
   els.commitBtn.disabled = !canWrite || n === 0 || state.busy;
-  els.commitBtn.textContent = state.busy ? '处理中…' : '提交选中';
+  els.commitBtn.textContent = state.busy ? t('处理中…') : t('提交选中');
   els.selectAllBtn.disabled = !canWrite || !total || n === total || state.busy;
-  els.selectAllBtn.title = total ? `勾选全部 ${total} 个文件` : '勾选当前仓库的全部文件';
+  els.selectAllBtn.title = total
+    ? t('勾选全部 {n} 个文件', { n: total })
+    : t('勾选当前仓库的全部文件');
   els.selectNoneBtn.disabled = !canWrite || n === 0 || state.busy;
-  els.selectNoneBtn.title = n ? `取消已勾选的 ${n} 个文件` : '取消所有勾选';
+  els.selectNoneBtn.title = n
+    ? t('取消已勾选的 {n} 个文件', { n })
+    : t('取消所有勾选');
   // 文件列表顶部那颗「全选」：全选 / 半选 / 未选三态
   els.pickAll.disabled = !canWrite || !total || state.busy;
   els.pickAll.checked = total > 0 && n === total;
   els.pickAll.indeterminate = n > 0 && n < total;
-  els.pickAll.title = total ? `全选（共 ${total} 个文件，已选 ${n}）` : '勾选本仓库的全部文件';
+  els.pickAll.title = total
+    ? t('全选（共 {n} 个文件，已选 {sel}）', { n: total, sel: n })
+    : t('勾选本仓库的全部文件');
   els.listSelectNoneBtn.disabled = !canWrite || n === 0 || state.busy;
-  els.listSelectNoneBtn.title = n ? `清空已勾选的 ${n} 个文件` : '清空勾选';
+  els.listSelectNoneBtn.title = n ? t('清空已勾选的 {n} 个文件', { n }) : t('清空勾选');
   els.commitExpandBtn.disabled = state.busy;
   // 没配远程的仓库就别让用户点进去再吃一次报错
   els.pushBtn.disabled = !hasRemote || state.busy;
-  els.pushBtn.textContent = canWrite && st.ahead ? `推送 ↑${st.ahead}` : '推送';
+  els.pushBtn.textContent = canWrite && st.ahead ? t('推送 ↑{n}', { n: st.ahead }) : t('推送');
   els.pushBtn.title = !canWrite
-    ? '推送'
+    ? t('推送')
     : !hasRemote
-      ? '没有远程仓库'
+      ? t('没有远程仓库')
       : st.upstream
-        ? `推送到 ${st.upstream}`
-        : `推送到 ${(st.remotes || [])[0]}（未设上游）`;
+        ? t('推送到 {target}', { target: st.upstream })
+        : t('推送到 {target}（未设上游）', { target: (st.remotes || [])[0] });
 
   // 拉取：detached / 尚无提交 / 没远程都不能拉
   els.pullBtn.disabled = !canWrite || !hasRemote || st.detached || st.initial || state.busy;
-  els.pullBtn.textContent = canWrite && st.behind ? `拉取 ↓${st.behind}` : '拉取';
+  els.pullBtn.textContent = canWrite && st.behind ? t('拉取 ↓{n}', { n: st.behind }) : t('拉取');
   els.pullBtn.title = !canWrite
-    ? '拉取'
+    ? t('拉取')
     : !hasRemote
-      ? '没有远程仓库'
+      ? t('没有远程仓库')
       : st.detached
-        ? 'detached HEAD，先切回分支'
+        ? t('detached HEAD，先切回分支')
         : st.initial
-          ? '还没有任何提交'
+          ? t('还没有任何提交')
           : st.upstream
-            ? `从 ${st.upstream} 拉取`
-            : `从 ${(st.remotes || [])[0]} 拉取（未设上游）`;
+            ? t('从 {target} 拉取', { target: st.upstream })
+            : t('从 {target} 拉取（未设上游）', { target: (st.remotes || [])[0] });
 }
 
 function toggleChecked(path) {
@@ -1617,12 +1725,12 @@ let editCommitAfter = false;
 async function editMessage() {
   editCommitAfter = false;
   const ok = await askModal({
-    title: '编辑提交信息',
-    okText: '用这条信息',
+    title: t('编辑提交信息'),
+    okText: t('用这条信息'),
     focus: '#msgEditor',
     html: `<textarea id="msgEditor" class="msg-editor" spellcheck="false"
-        placeholder="提交信息">${esc(els.commitMsg.value)}</textarea>
-      <p class="dim">Ctrl+Enter 提交 · Esc 取消</p>`,
+        placeholder="${t('提交信息')}">${esc(els.commitMsg.value)}</textarea>
+      <p class="dim">${t('Ctrl+Enter 提交 · Esc 取消')}</p>`,
   });
   if (!ok) {
     editCommitAfter = false;
@@ -1643,28 +1751,32 @@ async function editMessage() {
 async function doCommit() {
   const path = state.selectedRepo;
   const st = repoStatus();
-  if (!path) return toast('先选一个仓库', true);
-  if (!st) return toast('status 还在读取', true);
-  if (st.error) return toast('读取失败，没法提交', true);
+  if (!path) return toast(t('先选一个仓库'), true);
+  if (!st) return toast(t('status 还在读取'), true);
+  if (st.error) return toast(t('读取失败，没法提交'), true);
   if (state.busy) return;
 
   const files = [...state.checked];
-  if (!files.length) return toast('先勾选文件', true);
+  if (!files.length) return toast(t('先勾选文件'), true);
   const message = els.commitMsg.value.trim();
   if (!message) {
-    toast('提交信息不能为空', true);
+    toast(t('提交信息不能为空'), true);
     els.commitMsg.focus();
     return;
   }
 
   const shown = files.slice(0, 12).map((f) => `<li>${esc(f)}</li>`).join('');
-  const more = files.length > 12 ? `<li>… 还有 ${files.length - 12} 个文件</li>` : '';
+  const more =
+    files.length > 12 ? `<li>${t('… 还有 {n} 个文件', { n: files.length - 12 })}</li>` : '';
   const ok = await askModal({
-    title: '确认提交',
-    html: `<p>把 <b>${files.length}</b> 个文件提交到 <code>${esc(st.branch || '当前分支')}</code></p>
+    title: t('确认提交'),
+    html: `<p>${t('把 {n} 个文件提交到 {branch}', {
+      n: `<b>${files.length}</b>`,
+      branch: `<code>${esc(st.branch || t('当前分支'))}</code>`,
+    })}</p>
       <div class="msg-preview">${esc(message)}</div>
       <ul class="file-preview">${shown}${more}</ul>`,
-    okText: '提交',
+    okText: t('提交'),
   });
   if (!ok) return;
 
@@ -1674,14 +1786,18 @@ async function doCommit() {
     const res = await invoke('commit_files', { path, files, message });
     state.checked.clear();
     els.commitMsg.value = '';
-    toast(`已提交 ${res.hash}${res.subject ? `：${res.subject}` : ''}`);
-    els.statusLeft.innerHTML = `提交成功 <b>${esc(res.hash)}</b>${
-      res.subject ? ` · ${esc(res.subject)}` : ''
-    }${res.branch ? ` · ${esc(res.branch)}` : ''}`;
+    toast(
+      res.subject
+        ? t('已提交 {hash}：{subject}', { hash: res.hash, subject: res.subject })
+        : t('已提交 {hash}', { hash: res.hash })
+    );
+    els.statusLeft.innerHTML = `${t('提交成功 {hash}', {
+      hash: `<b>${esc(res.hash)}</b>`,
+    })}${res.subject ? ` · ${esc(res.subject)}` : ''}${res.branch ? ` · ${esc(res.branch)}` : ''}`;
     await refreshRepo(path);
   } catch (e) {
-    els.statusLeft.innerHTML = '<span class="err">提交失败</span>';
-    await showError('提交失败', errText(e));
+    els.statusLeft.innerHTML = `<span class="err">${t('提交失败')}</span>`;
+    await showError(t('提交失败'), errText(e));
   } finally {
     state.busy = false;
     renderCommitBar();
@@ -1691,22 +1807,25 @@ async function doCommit() {
 async function doPush() {
   const path = state.selectedRepo;
   const st = repoStatus();
-  if (!path) return toast('先选一个仓库', true);
-  if (!st) return toast('status 还在读取', true);
-  if (st.error) return toast('读取失败，没法推送', true);
-  if (!(st.remotes || []).length) return toast('没有远程仓库', true);
+  if (!path) return toast(t('先选一个仓库'), true);
+  if (!st) return toast(t('status 还在读取'), true);
+  if (st.error) return toast(t('读取失败，没法推送'), true);
+  if (!(st.remotes || []).length) return toast(t('没有远程仓库'), true);
   if (state.busy) return;
 
   const target = st.upstream
-    ? `到 <code>${esc(st.upstream)}</code>`
-    : `到 <code>${esc(st.remotes[0])}</code>/${esc(st.branch || '')}`;
+    ? `<code>${esc(st.upstream)}</code>`
+    : `<code>${esc(st.remotes[0])}</code>/${esc(st.branch || '')}`;
   const ok = await askModal({
-    title: '确认推送',
-    html: `<p>把 <code>${esc(st.branch || '当前分支')}</code> 推${target}？</p>
+    title: t('确认推送'),
+    html: `<p>${t('把 {branch} 推到 {target}？', {
+      branch: `<code>${esc(st.branch || t('当前分支'))}</code>`,
+      target,
+    })}</p>
       <p class="dim">${
-        st.ahead ? `待推送 ${st.ahead} 个提交` : '没有待推送的提交'
-      }${st.behind ? ` · 远程多 ${st.behind} 个提交` : ''}</p>`,
-    okText: '推送',
+        st.ahead ? t('待推送 {n} 个提交', { n: st.ahead }) : t('没有待推送的提交')
+      }${st.behind ? t(' · 远程多 {n} 个提交', { n: st.behind }) : ''}</p>`,
+    okText: t('推送'),
   });
   if (!ok) return;
 
@@ -1714,25 +1833,25 @@ async function doPush() {
   renderCommitBar();
   try {
     const res = await invoke('push_repo', { path });
-    toast(`已推送 ${res.branch}`);
-    els.statusLeft.innerHTML = `推送成功 · <b>${esc(res.branch)}</b>${
-      res.set_upstream ? ` → ${esc(res.remote)}` : res.upstream ? ` → ${esc(res.upstream)}` : ''
-    }`;
+    toast(t('已推送 {branch}', { branch: res.branch }));
+    els.statusLeft.innerHTML = `${t('推送成功 · {branch}', {
+      branch: `<b>${esc(res.branch)}</b>`,
+    })}${res.set_upstream ? ` → ${esc(res.remote)}` : res.upstream ? ` → ${esc(res.upstream)}` : ''}`;
     await refreshRepo(path);
     const lines = (res.output || '').split('\n').filter((l) => l.trim());
     if (lines.length > 1) {
       await askModal({
-        title: '推送完成',
+        title: t('推送完成'),
         html: `<div class="raw" style="color:#bfe6c8;background:#0d1a12;border-color:rgba(63,185,80,.28)">${esc(
           res.output
         )}</div>`,
-        okText: '知道了',
+        okText: t('知道了'),
         showCancel: false,
       });
     }
   } catch (e) {
-    els.statusLeft.innerHTML = '<span class="err">推送失败</span>';
-    await showError('推送失败', errText(e));
+    els.statusLeft.innerHTML = `<span class="err">${t('推送失败')}</span>`;
+    await showError(t('推送失败'), errText(e));
   } finally {
     state.busy = false;
     renderCommitBar();
@@ -1742,21 +1861,24 @@ async function doPush() {
 async function doPull() {
   const path = state.selectedRepo;
   const st = repoStatus();
-  if (!path) return toast('先选一个仓库', true);
-  if (!st) return toast('status 还在读取', true);
-  if (st.error) return toast('读取失败，没法拉取', true);
-  if (!(st.remotes || []).length) return toast('没有远程仓库', true);
-  if (st.detached) return toast('detached HEAD，先切回分支', true);
+  if (!path) return toast(t('先选一个仓库'), true);
+  if (!st) return toast(t('status 还在读取'), true);
+  if (st.error) return toast(t('读取失败，没法拉取'), true);
+  if (!(st.remotes || []).length) return toast(t('没有远程仓库'), true);
+  if (st.detached) return toast(t('detached HEAD，先切回分支'), true);
   if (state.busy) return;
 
   const from = st.upstream || `${(st.remotes || [])[0]}/${st.branch || ''}`;
   const ok = await askModal({
-    title: '确认拉取',
-    html: `<p>把 <code>${esc(from)}</code> 拉到 <code>${esc(st.branch || '当前分支')}</code>？</p>
+    title: t('确认拉取'),
+    html: `<p>${t('把 {from} 拉到 {branch}？', {
+      from: `<code>${esc(from)}</code>`,
+      branch: `<code>${esc(st.branch || t('当前分支'))}</code>`,
+    })}</p>
       <p class="dim">${
-        st.behind ? `远程多 ${st.behind} 个提交` : '远程没有新提交'
-      }${st.ahead ? ` · 本地多 ${st.ahead} 个提交` : ''}</p>`,
-    okText: '拉取',
+        st.behind ? t('远程多 {n} 个提交', { n: st.behind }) : t('远程没有新提交')
+      }${st.ahead ? t(' · 本地多 {n} 个提交', { n: st.ahead }) : ''}</p>`,
+    okText: t('拉取'),
   });
   if (!ok) return;
 
@@ -1764,15 +1886,16 @@ async function doPull() {
   renderCommitBar();
   try {
     const res = await invoke('pull_repo', { path });
-    toast(`已拉取 · ${res.summary}`);
-    els.statusLeft.innerHTML = `拉取完成 · <b>${esc(res.branch)}</b> ← ${esc(
-      res.upstream || res.remote || ''
-    )} · ${esc(res.summary)}`;
+    toast(t('已拉取 · {summary}', { summary: res.summary }));
+    els.statusLeft.innerHTML = `${t('拉取完成 · {branch} ← {from}', {
+      branch: `<b>${esc(res.branch)}</b>`,
+      from: esc(res.upstream || res.remote || ''),
+    })} · ${esc(res.summary)}`;
     await refreshRepo(path);
     if (state.view === 'graph') loadGraph(true);
   } catch (e) {
-    els.statusLeft.innerHTML = '<span class="err">拉取失败</span>';
-    await showError('拉取失败', errText(e));
+    els.statusLeft.innerHTML = `<span class="err">${t('拉取失败')}</span>`;
+    await showError(t('拉取失败'), errText(e));
   } finally {
     state.busy = false;
     renderCommitBar();
@@ -1784,7 +1907,7 @@ function pushRowHtml({ ref, st }) {  const ahead = st.ahead || 0;
   const remote = (st.remotes || [])[0] || '';
   const up = st.upstream
     ? `<code>${esc(st.upstream)}</code>`
-    : `${esc(remote || '无远程')} <span class="dim">（未设上游）</span>`;
+    : `${esc(remote || t('无远程'))} <span class="dim">${t('（未设上游）')}</span>`;
   return `<li class="push-row" data-path="${esc(ref.path)}">
     <div class="push-main">
       <div class="push-title"><span class="push-name">${esc(ref.name)}</span>${
@@ -1793,11 +1916,11 @@ function pushRowHtml({ ref, st }) {  const ahead = st.ahead || 0;
       <div class="push-sub" title="${esc(nicePath(ref.path))}">${esc(nicePath(ref.path))}</div>
     </div>
     <div class="push-meta">
-      <span class="push-ahead" title="待推送 ${ahead} 个提交">↑${ahead}</span>
+      <span class="push-ahead" title="${t('待推送 {n} 个提交', { n: ahead })}">↑${ahead}</span>
       <span class="push-up">${up}</span>
     </div>
     <span class="push-state"></span>
-    <button class="btn small" data-push>推送</button>
+    <button class="btn small" data-push>${t('推送')}</button>
   </li>`;
 }
 
@@ -1806,8 +1929,8 @@ async function pushOne(path) {
   try {
     const res = await invoke('push_repo', { path });
     await refreshRepo(path);
-    const to = res.upstream || res.remote || '远程';
-    return { ok: true, msg: `已推送 → ${to}` };
+    const to = res.upstream || res.remote || t('远程');
+    return { ok: true, msg: t('已推送 → {to}', { to }) };
   } catch (e) {
     return { ok: false, msg: errText(e) };
   }
@@ -1831,12 +1954,12 @@ async function pushRows(rows) {
       const stateEl = row.querySelector('.push-state');
       if (btn) btn.disabled = true;
       if (stateEl) {
-        stateEl.textContent = '推送中…';
+        stateEl.textContent = t('推送中…');
         stateEl.className = 'push-state run';
       }
       const res = await pushOne(path);
       if (stateEl) {
-        stateEl.textContent = res.ok ? '已推送' : res.msg;
+        stateEl.textContent = res.ok ? t('已推送') : res.msg;
         stateEl.className = `push-state ${res.ok ? 'ok' : 'err'}`;
       }
       if (res.ok) okCount += 1;
@@ -1853,14 +1976,15 @@ async function pushRows(rows) {
 
   const left = pushTargets().length;
   els.pushEntry.hidden = left === 0;
-  if (okCount && failCount) toast(`推送完成：${okCount} 个成功，${failCount} 个失败`, true);
-  else if (okCount) toast(`已推送 ${okCount} 个仓库`);
-  else if (failCount) toast(`推送失败：${failCount} 个仓库`, true);
+  if (okCount && failCount) {
+    toast(t('推送完成：{ok} 个成功，{fail} 个失败', { ok: okCount, fail: failCount }), true);
+  } else if (okCount) toast(t('已推送 {n} 个仓库', { n: okCount }));
+  else if (failCount) toast(t('推送失败：{n} 个仓库', { n: failCount }), true);
   if (!left && !els.modalWrap.hidden) {
     await askModal({
-      title: '推送完成',
-      html: '<p>没有待推送的提交了。</p>',
-      okText: '知道了',
+      title: t('推送完成'),
+      html: `<p>${t('没有待推送的提交了。')}</p>`,
+      okText: t('知道了'),
       showCancel: false,
     });
   }
@@ -1869,17 +1993,23 @@ async function pushRows(rows) {
 async function openPushBoard() {
   const list = pushTargets();
   if (!list.length) {
-    toast('现在没有需要推送的仓库');
+    toast(t('现在没有需要推送的仓库'));
     return;
   }
   const total = list.reduce((a, x) => a + (x.st.ahead || 0), 0);
   await askModal({
-    title: '哪些仓库需要推送',
-    okText: '关闭',
+    title: t('哪些仓库需要推送'),
+    okText: t('关闭'),
     showCancel: false,
-    html: `<p class="push-sum">共 <b>${list.length}</b> 个仓库、<b>${total}</b> 个提交待推送</p>
+    html: `<p class="push-sum">${t('共 {n} 个仓库、{m} 个提交待推送', {
+      n: `<b>${list.length}</b>`,
+      m: `<b>${total}</b>`,
+    })}</p>
       <ul class="push-list">${list.map(pushRowHtml).join('')}</ul>
-      <div class="push-actions"><button class="btn primary small" id="pushAllBtn">全部推送（${list.length} 个）</button></div>`,
+      <div class="push-actions"><button class="btn primary small" id="pushAllBtn">${t(
+        '全部推送（{n} 个）',
+        { n: list.length }
+      )}</button></div>`,
   });
 }
 
@@ -1950,43 +2080,51 @@ function auditFormHtml() {
   const checked = (id) => (auditState.skip.includes(id) ? ' checked' : '');
   return `<div class="audit-form">
     <label class="audit-field">
-      <span>允许分支</span>
+      <span>${t('允许分支')}</span>
       <input id="auditBranch" value="${esc(auditState.branch)}"
-             placeholder="main, release/*（留空 = 不检查）" spellcheck="false" autocomplete="off" />
+             placeholder="${t('main, release/*（留空 = 不检查）')}" spellcheck="false" autocomplete="off" />
     </label>
     <label class="audit-field">
-      <span>基准分支</span>
+      <span>${t('基准分支')}</span>
       <input id="auditBase" value="${esc(auditState.base)}"
-             placeholder="留空 = 自动探测 main / master" spellcheck="false" autocomplete="off" />
+             placeholder="${t('留空 = 自动探测 main / master')}" spellcheck="false" autocomplete="off" />
     </label>
     <label class="audit-field">
-      <span>扫描深度</span>
+      <span>${t('扫描深度')}</span>
       <input id="auditDepth" type="number" min="1" max="16" value="${esc(auditState.depth)}"
-             placeholder="留空 = 配置文件 / 4" spellcheck="false" autocomplete="off" />
+             placeholder="${t('留空 = 配置文件 / 4')}" spellcheck="false" autocomplete="off" />
     </label>
     <label class="audit-field">
-      <span>检查模式</span>
+      <span>${t('检查模式')}</span>
       <select id="auditStrict">
-        <option value=""${auditState.strict === '' ? ' selected' : ''}>跟随配置文件（没配置就是只提示）</option>
-        <option value="1"${auditState.strict === '1' ? ' selected' : ''}>严格：未提交改动也算不能发</option>
-        <option value="0"${auditState.strict === '0' ? ' selected' : ''}>宽松：未提交改动只提示</option>
+        <option value=""${auditState.strict === '' ? ' selected' : ''}>${t(
+          '跟随配置文件（没配置就是只提示）'
+        )}</option>
+        <option value="1"${auditState.strict === '1' ? ' selected' : ''}>${t(
+          '严格：未提交改动也算不能发'
+        )}</option>
+        <option value="0"${auditState.strict === '0' ? ' selected' : ''}>${t(
+          '宽松：未提交改动只提示'
+        )}</option>
       </select>
     </label>
     <div class="audit-skips">
       ${AUDIT_SKIP_OPTIONS.map(
         (s) =>
-          `<label class="check"><input type="checkbox" data-skip="${s.id}"${checked(s.id)} /><span>${s.label}</span></label>`
+          `<label class="check"><input type="checkbox" data-skip="${s.id}"${checked(
+            s.id
+          )} /><span>${t(s.label)}</span></label>`
       ).join('')}
     </div>
     <label class="check audit-cfg">
       <input type="checkbox" id="auditUseConfig"${auditState.useConfig ? ' checked' : ''} />
-      <span>使用目录里的 <code>.gittracer.toml</code></span>
+      <span>${t('使用目录里的')} <code>.gittracer.toml</code></span>
     </label>
     <div class="audit-actions">
       <button class="btn primary small" id="auditRunBtn"${auditState.running ? ' disabled' : ''}>
-        ${auditState.running ? '巡检中…' : auditState.report ? '重新巡检' : '开始巡检'}
+        ${auditState.running ? t('巡检中…') : auditState.report ? t('重新巡检') : t('开始巡检')}
       </button>
-      <span class="dim">只读检查，不动任何仓库</span>
+      <span class="dim">${t('只读检查，不动任何仓库')}</span>
     </div>
     <div id="auditResult" class="audit-result">${auditResultHtml()}</div>
   </div>`;
@@ -1998,60 +2136,66 @@ function auditResultHtml() {
   }
   const r = auditState.report;
   if (!r) {
-    return `<div class="audit-empty dim">
-      还没跑。检查分两类：<b>发版状态</b>（冲突、半途的合并 / 变基、detached HEAD、未推送、
-      分支不符合规则）不过就是阻断；<b>工作区</b>（未提交改动、stash、落后远程、遗留分支）
-      只提示——几乎每台开发机都有没提交的活，把它当阻断会让每个仓库都变红，结论就没有信息量了。
-      要从工作区直接打包发版，把「检查模式」切成严格。<br />
-      规则可以写进目录里的 <code>.gittracer.toml</code> 跟着仓库走，命令行
-      <code>gittracer-audit</code> 读的是同一份，按返回码判定。
-    </div>`;
+    return `<div class="audit-empty dim">${t(
+      '还没跑。检查分两类：<b>发版状态</b>（冲突、半途的合并 / 变基、detached HEAD、未推送、分支不符合规则）不过就是阻断；<b>工作区</b>（未提交改动、stash、落后远程、遗留分支）只提示——几乎每台开发机都有没提交的活，把它当阻断会让每个仓库都变红，结论就没有信息量了。要从工作区直接打包发版，把「检查模式」切成严格。<br />规则可以写进目录里的 <code>.gittracer.toml</code> 跟着仓库走，命令行 <code>gittracer-audit</code> 读的是同一份，按返回码判定。'
+    )}</div>`;
   }
 
-  const t = r.totals || {};
-  const verdict = r.verdict || (t.errors ? 'blocked' : t.warnings ? 'attention' : 'passed');
-  const verdictWord = verdict === 'blocked' ? '未通过' : verdict === 'attention' ? '注意' : '通过';
+  const tot = r.totals || {};
+  const verdict = r.verdict || (tot.errors ? 'blocked' : tot.warnings ? 'attention' : 'passed');
+  const verdictWord =
+    verdict === 'blocked' ? t('未通过') : verdict === 'attention' ? t('注意') : t('通过');
   const verdictCls = verdict === 'blocked' ? 'bad' : verdict === 'attention' ? 'warn' : 'ok';
-  const hints = (t.warnings || 0) + (t.infos || 0);
+  const hints = (tot.warnings || 0) + (tot.infos || 0);
   const cfgCount = (r.config_files || []).length;
   const head = `<div class="audit-sum">
     <span class="audit-verdict ${verdictCls}" title="${
       verdict === 'blocked'
-        ? '有阻断项，现在发出去会出问题'
+        ? t('有阻断项，现在发出去会出问题')
         : verdict === 'attention'
-        ? '没有阻断项，但有提示需要看一眼'
-        : '没有阻断项，也没有提示'
+        ? t('没有阻断项，但有提示需要看一眼')
+        : t('没有阻断项，也没有提示')
     }">${verdictWord}</span>
-    <span class="audit-nums">${t.repos || 0} 个仓库 · ${t.failed || 0} 未通过 / ${t.passed || 0} 通过
-      · ${t.errors || 0} 阻断 / ${hints} 提示 · ${((r.elapsed_ms || 0) / 1000).toFixed(1)}s</span>
+    <span class="audit-nums">${t(
+      '{repos} 个仓库 · {failed} 未通过 / {passed} 通过 · {errors} 阻断 / {hints} 提示 · {secs}s',
+      {
+        repos: tot.repos || 0,
+        failed: tot.failed || 0,
+        passed: tot.passed || 0,
+        errors: tot.errors || 0,
+        hints,
+        secs: ((r.elapsed_ms || 0) / 1000).toFixed(1),
+      }
+    )}</span>
     ${
       r.strict
-        ? `<span class="audit-tag skip" title="未提交改动也算阻断">严格模式</span>`
+        ? `<span class="audit-tag skip" title="${t('未提交改动也算阻断')}">${t('严格模式')}</span>`
         : ''
     }
     ${
       cfgCount
         ? `<span class="audit-cfg-note" title="${esc(
             (r.config_files || []).join('\n')
-          )}">依据 ${cfgCount} 个 .gittracer.toml</span>`
+          )}">${t('依据 {n} 个 .gittracer.toml', { n: cfgCount })}</span>`
         : ''
     }
   </div>${
     (r.root_errors || []).length
-      ? `<div class="audit-empty err">这些根目录用不了，已跳过（其余照常）：${(r.root_errors || [])
-          .map((e) => esc(e))
-          .join('；')}</div>`
+      ? `<div class="audit-empty err">${t('这些根目录用不了，已跳过（其余照常）：{list}', {
+          list: (r.root_errors || []).map((e) => esc(e)).join('；'),
+        })}</div>`
       : ''
   }${
-    t.workspace
-      ? `<div class="audit-ws">${t.workspace} 个仓库工作区有活（未提交改动 / stash / 落后远程）${
-          r.strict ? '，已计入阻断' : '，只提示不影响结论'
-        }</div>`
+    tot.workspace
+      ? `<div class="audit-ws">${t(
+          '{n} 个仓库工作区有活（未提交改动 / stash / 落后远程）',
+          { n: tot.workspace }
+        )}${r.strict ? t('，已计入阻断') : t('，只提示不影响结论')}</div>`
       : ''
   }`;
 
   if (!r.repos || !r.repos.length) {
-    return `${head}<div class="audit-empty">这个目录下没找到 Git 仓库。</div>`;
+    return `${head}<div class="audit-empty">${t('这个目录下没找到 Git 仓库。')}</div>`;
   }
 
   const rows = r.repos
@@ -2079,18 +2223,20 @@ function auditResultHtml() {
           <span class="branch">${esc(repo.branch || 'detached')}</span>
           ${
             repo.config
-              ? `<span class="audit-tag" title="${esc(repo.config)}">本地配置</span>`
+              ? `<span class="audit-tag" title="${esc(repo.config)}">${t('本地配置')}</span>`
               : ''
           }
           ${
             skipDiff(repo.effective_skip, r.skipped)
-              ? `<span class="audit-tag skip" title="本仓库跳过：${esc(
-                  repo.effective_skip.join(', ')
-                )}">跳过 ${(repo.effective_skip || []).length}</span>`
+              ? `<span class="audit-tag skip" title="${t('本仓库跳过：{list}', {
+                  list: esc(repo.effective_skip.join(', ')),
+                })}">${t('跳过 {n}', { n: (repo.effective_skip || []).length })}</span>`
               : ''
           }
           <span class="grow"></span>
-          <button class="icon-mini" data-reveal="${esc(repo.path)}" title="在资源管理器中打开">&#8599;</button>
+          <button class="icon-mini" data-reveal="${esc(repo.path)}" title="${t(
+            '在资源管理器中打开'
+          )}">&#8599;</button>
         </div>
         <div class="audit-path" title="${esc(nicePath(repo.path))}">${esc(nicePath(repo.path))}</div>
         ${findings ? `<ul class="audit-findings">${findings}</ul>` : ''}
@@ -2101,15 +2247,15 @@ function auditResultHtml() {
   return `${head}
     <ul class="audit-list">${rows}</ul>
     <div class="audit-foot">
-      <button class="btn small" id="auditCopyMd">复制报告（Markdown）</button>
-      <button class="btn small" id="auditCopyCmd">复制命令行</button>
-      <span class="dim">命令行返回码：0 没有阻断项（可能带提示）/ 1 有阻断项</span>
+      <button class="btn small" id="auditCopyMd">${t('复制报告（Markdown）')}</button>
+      <button class="btn small" id="auditCopyCmd">${t('复制命令行')}</button>
+      <span class="dim">${t('命令行返回码：0 没有阻断项（可能带提示）/ 1 有阻断项')}</span>
     </div>`;
 }
 
 function openAuditPanel() {
   if (!state.roots.length) {
-    toast('先添加要扫描的目录', true);
+    toast(t('先添加要扫描的目录'), true);
     els.rootInput.focus();
     return;
   }
@@ -2118,9 +2264,9 @@ function openAuditPanel() {
   auditState.command = '';
   auditState.error = '';
   askModal({
-    title: '发版前巡检',
+    title: t('发版前巡检'),
     html: auditFormHtml(),
-    okText: '关闭',
+    okText: t('关闭'),
     showCancel: false,
     focus: '#auditBranch',
     wide: true,
@@ -2150,12 +2296,12 @@ async function runAudit() {
   const box = document.getElementById('auditResult');
   if (btn) {
     btn.disabled = true;
-    btn.textContent = '巡检中…';
+    btn.textContent = t('巡检中…');
   }
   if (box) {
     box.innerHTML =
       `<div class="audit-empty"><span class="spinner" style="display:inline-block;vertical-align:-2px"></span>` +
-      ` 正在跑 ${state.roots.length} 个根目录…</div>`;
+      t('正在跑 {n} 个根目录…', { n: state.roots.length }) + '</div>';
   }
   els.modalOk.disabled = true;
 
@@ -2182,7 +2328,7 @@ async function runAudit() {
     els.modalOk.disabled = false;
     if (btn) {
       btn.disabled = false;
-      btn.textContent = '重新巡检';
+      btn.textContent = t('重新巡检');
     }
     const out = document.getElementById('auditResult');
     if (out) out.innerHTML = auditResultHtml();
@@ -2227,8 +2373,9 @@ function progress() {
   const done = state.repos.filter((r) => state.status.has(r.path)).length;
   if (done >= state.repos.length) return;
   els.statusLeft.innerHTML =
-    `<span class="spinner" style="display:inline-block;vertical-align:-2px"></span> 正在读取 git status… ` +
-    `<b>${done}</b>/${state.repos.length}`;
+    `<span class="spinner" style="display:inline-block;vertical-align:-2px"></span> ${t(
+      '正在读取 git status…'
+    )} <b>${done}</b>/${state.repos.length}`;
 }
 
 async function loadAll(list, seq) {
@@ -2249,7 +2396,7 @@ async function loadAll(list, seq) {
 
 async function scan() {
   if (!state.roots.length) {
-    toast('先添加要扫描的目录', true);
+    toast(t('先添加要扫描的目录'), true);
     els.rootInput.focus();
     return;
   }
@@ -2272,7 +2419,9 @@ async function scan() {
 
   els.scanBtn.disabled = true;
   els.refreshBtn.disabled = true;
-  els.statusLeft.innerHTML = '<span class="spinner" style="display:inline-block;vertical-align:-2px"></span> 正在遍历目录…';
+  els.statusLeft.innerHTML = `<span class="spinner" style="display:inline-block;vertical-align:-2px"></span> ${t(
+    '正在遍历目录…'
+  )}`;
   renderRoots();
   renderRepoList();
   renderFileList();
@@ -2321,10 +2470,12 @@ async function scan() {
   if (failedRoots === results.length) {
     els.scanBtn.disabled = false;
     els.refreshBtn.disabled = false;
-    els.statusLeft.innerHTML = '<span class="err">扫描失败</span>';
+    els.statusLeft.innerHTML = `<span class="err">${t('扫描失败')}</span>`;
     renderRepoList();
-    els.diffBody.innerHTML = `<div class="notice">扫描失败：${esc(errors[0] || '未知错误')}</div>`;
-    toast(errors[0] || '扫描失败', true);
+    els.diffBody.innerHTML = `<div class="notice">${t('扫描失败：{e}', {
+      e: esc(errors[0] || t('未知错误')),
+    })}</div>`;
+    toast(errors[0] || t('扫描失败'), true);
     return;
   }
 
@@ -2339,7 +2490,7 @@ async function scan() {
   if (state.roots.length === 1) pushRecent(state.roots[0]);
   renderStats();
   renderRepoList();
-  els.statusLeft.textContent = `找到 ${repos.length} 个仓库，正在读取 git status…`;
+  els.statusLeft.textContent = t('找到 {n} 个仓库，正在读取 git status…', { n: repos.length });
 
   if (repos.length) await loadAll(repos.slice(), seq);
   if (seq !== state.seq) return;
@@ -2347,29 +2498,48 @@ async function scan() {
   els.scanBtn.disabled = false;
   els.refreshBtn.disabled = false;
 
-  const dirty = repos.filter((r) => {
-    const st = state.status.get(r.path);
-    return st && !st.error && distinctCount(st) > 0;
-  });
-  let failed = 0;
-  for (const r of repos) {
-    const st = state.status.get(r.path);
-    if (st && st.error) failed += 1;
-  }
-  els.statusLeft.innerHTML =
-    `扫描完成：<b>${repos.length}</b> 个仓库，<b>${dirty.length}</b> 个有变更` +
-    ` · ${fmtMs(Math.round(performance.now() - t0))}` +
-    (failed ? ` · <span class="err">${failed} 个读取失败</span>` : '') +
-    (errors.length ? ` · <span class="err">${errors.length} 个目录出错</span>` : '');
+  renderStatus(Math.round(performance.now() - t0));
 
   renderStats();
   renderRepoList();
 
   // 自动选中第一个有变更的仓库，省掉一次点击
   if (!state.selectedRepo && repos.length) {
+    const dirty = repos.filter((r) => {
+      const st = state.status.get(r.path);
+      return st && !st.error && distinctCount(st) > 0;
+    });
     const target = dirty[0] || repos[0];
     selectRepo(target.path);
   }
+}
+
+/** 底部状态栏：有扫描结果就复述一遍统计（切语言后靠它重新拼一次） */
+function renderStatus(elapsedMs) {
+  const scan = state.scan;
+  if (!scan || !state.repos.length) {
+    els.statusLeft.textContent = t('就绪');
+    return;
+  }
+  let dirty = 0;
+  let failed = 0;
+  for (const r of state.repos) {
+    const st = state.status.get(r.path);
+    if (!st) continue;
+    if (st.error) failed += 1;
+    else if (distinctCount(st) > 0) dirty += 1;
+  }
+  const ms = elapsedMs === undefined ? scan.elapsed_ms : elapsedMs;
+  els.statusLeft.innerHTML =
+    t('扫描完成：{n} 个仓库，{dirty} 个有变更', {
+      n: `<b>${state.repos.length}</b>`,
+      dirty: `<b>${dirty}</b>`,
+    }) +
+    ` · ${fmtMs(ms)}` +
+    (failed ? ` · <span class="err">${t(' · {n} 个读取失败', { n: failed })}</span>` : '') +
+    (scan.errors.length
+      ? ` · <span class="err">${t(' · {n} 个目录出错', { n: scan.errors.length })}</span>`
+      : '');
 }
 
 /* ---------- 事件 ---------- */
@@ -2455,11 +2625,11 @@ function bind() {
       return;
     }
     if (btn.id === 'auditCopyMd') {
-      copyText(auditState.markdown, '巡检报告已复制（Markdown）');
+      copyText(auditState.markdown, t('巡检报告已复制（Markdown）'));
       return;
     }
     if (btn.id === 'auditCopyCmd') {
-      copyText(auditState.command, '命令行已复制');
+      copyText(auditState.command, t('命令行已复制'));
       return;
     }
     if (btn.hasAttribute('data-reveal')) {
@@ -2506,6 +2676,9 @@ function bind() {
   els.scanBtn.onclick = () => scan();
   els.refreshBtn.onclick = () => scan();
   els.auditBtn.onclick = () => openAuditPanel();
+
+  const langBtn = document.getElementById('langBtn');
+  if (langBtn) langBtn.onclick = () => setLang(LANG === 'en' ? 'zh' : 'en');
 
   els.browseBtn.onclick = async () => {
     try {
@@ -2587,8 +2760,47 @@ function bind() {
   });
 }
 
+/* ---------- 语言切换 ---------- */
+
+/**
+ * 切完语言后把「由 JS 画出来」的区域重画一遍。
+ * 静态文案（顶栏、按钮、表头）不用管，i18n.js 的 applyI18n 已经刷过了。
+ */
+function onLangChanged() {
+  renderRoots();
+  renderViewTabs();
+  renderStats();
+  renderRepoList();
+  renderRepoHead();
+  renderFileList();
+  renderDiffHead();
+  renderDiffBody();
+  renderCommitBar();
+  renderStatus();
+
+  // 巡检面板刚好开着：把用户已经填的内容接回来，再按新语言重画
+  if (els.modalBody.querySelector('.audit-form')) {
+    const val = (id) => {
+      const el = document.getElementById(id);
+      return el ? el.value : '';
+    };
+    auditState.branch = val('auditBranch');
+    auditState.base = val('auditBase');
+    auditState.depth = val('auditDepth');
+    auditState.strict = val('auditStrict');
+    const cfgEl = document.getElementById('auditUseConfig');
+    if (cfgEl) auditState.useConfig = cfgEl.checked;
+    auditState.skip = [...els.modalBody.querySelectorAll('[data-skip]:checked')].map(
+      (x) => x.dataset.skip
+    );
+    els.modalBody.innerHTML = auditFormHtml();
+  }
+}
+
 /* ---------- 启动 ---------- */
 async function init() {
+  initLang(); // 先定语言再画第一帧，免得中文闪一下
+  els.statusLeft.textContent = t('就绪');
   readPrefs();
   loadAuditPrefs();
   els.rootInput.value = '';
@@ -2609,9 +2821,16 @@ async function init() {
   renderDiffHead();
 
   if (!hasTauri()) {
-    els.statusLeft.innerHTML = '<span class="err">未在桌面应用中运行</span>';
-    els.diffBody.innerHTML = `<div class="notice">请通过 Git Tracer 桌面程序打开。</div>`;
+    els.statusLeft.innerHTML = `<span class="err">${t('未在桌面应用中运行')}</span>`;
+    els.diffBody.innerHTML = `<div class="notice">${t('请通过 Git Tracer 桌面程序打开。')}</div>`;
     return;
+  }
+
+  // 把界面语言同步给后端：窗口标题、原生对话框、CLI 报告都跟着走
+  try {
+    await invoke('set_lang', { lang: LANG });
+  } catch (_) {
+    /* 老版本后端没有这个命令：界面照常，只是原生标题不变 */
   }
 
   try {
@@ -2625,16 +2844,16 @@ async function init() {
     els.statGit.textContent = m ? `git ${m[1]}` : 'git';
     els.statGit.title = state.git.version || 'git';
   } else {
-    els.statGit.textContent = 'git 不可用';
+    els.statGit.textContent = t('git 不可用');
     els.statGit.style.color = '#ff9a94';
-    const hint = (state.git && state.git.hint) || '未找到 git';
+    const hint = (state.git && state.git.hint) || t('未找到 git');
     els.diffBody.innerHTML = `<div class="notice">${esc(hint)}</div>`;
     els.scanBtn.disabled = true;
     els.refreshBtn.disabled = true;
     return;
   }
 
-  els.statusLeft.textContent = '就绪';
+  els.statusLeft.textContent = t('就绪');
   if (state.roots.length) scan();
 }
 

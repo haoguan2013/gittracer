@@ -39,7 +39,13 @@ where
 {
     tauri::async_runtime::spawn_blocking(f)
         .await
-        .map_err(|e| format!("后台任务异常：{e}"))?
+        .map_err(|e| {
+            git_tracer_core::tr!(
+                "后台任务异常：{e}",
+                "Background task failed: {e}",
+                e = e
+            )
+        })?
 }
 
 #[tauri::command]
@@ -50,7 +56,13 @@ async fn git_info() -> git::GitInfo {
             available: false,
             version: None,
             exe: None,
-            hint: Some("读取 git 信息时出错".to_string()),
+            hint: Some(
+                git_tracer_core::i18n::t(
+                    "读取 git 信息时出错",
+                    "Failed to read git information",
+                )
+                .to_string(),
+            ),
         })
 }
 
@@ -61,7 +73,7 @@ async fn scan_repos(root: String, depth: u32, limit: Option<usize>) -> Result<sc
     let limit = limit.unwrap_or(800).clamp(1, 5000);
     let root_buf = std::path::PathBuf::from(root.trim());
     if root_buf.as_os_str().is_empty() {
-        return Err("请先选择一个目录".to_string());
+        return Err(git_tracer_core::i18n::t("请先选择一个目录", "Pick a directory first").to_string());
     }
     blocking(move || scan::scan(&root_buf, depth, limit)).await
 }
@@ -198,11 +210,38 @@ async fn audit_repos(
     })
 }
 
+/// 前端把用户选的语言推下来。
+///
+/// 后端所有文案、窗口标题、系统对话框标题都读这个进程级开关；窗口标题要在这里
+/// 手动改一次——它是原生窗口属性，改 DOM 上的 `<html lang>` 不会动它。
+#[tauri::command]
+fn set_lang(lang: String, window: tauri::Window) -> Result<(), String> {
+    let parsed = git_tracer_core::i18n::Lang::parse(&lang).ok_or_else(|| {
+        git_tracer_core::tr!(
+            "不认识的语言：{lang}",
+            "Unknown language: {lang}",
+            lang = lang
+        )
+    })?;
+    git_tracer_core::i18n::set(parsed);
+    let _ = window.set_title(git_tracer_core::i18n::t(
+        "Git Tracer · 待提交内容扫描",
+        "Git Tracer · Uncommitted changes",
+    ));
+    Ok(())
+}
+
 /// 系统「选择文件夹」对话框
 #[tauri::command]
 async fn pick_folder(initial: Option<String>) -> Result<Option<String>, String> {
     let initial = initial.unwrap_or_default();
-    blocking(move || dialog::pick_folder("选择要扫描的项目根目录", &initial)).await
+    blocking(move || {
+        dialog::pick_folder(
+            git_tracer_core::i18n::t("选择要扫描的项目根目录", "Choose a root directory to scan"),
+            &initial,
+        )
+    })
+    .await
 }
 
 /// 在资源管理器中定位文件 / 打开目录
@@ -254,7 +293,10 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWin
         "main",
         tauri::WebviewUrl::App("index.html".into()),
     )
-    .title("Git Tracer · 待提交内容扫描")
+    .title(git_tracer_core::i18n::t(
+        "Git Tracer · 待提交内容扫描",
+        "Git Tracer · Uncommitted changes",
+    ))
     .inner_size(1360.0, 860.0)
     .min_inner_size(1000.0, 620.0)
     .center()
@@ -284,7 +326,8 @@ pub fn run() {
             reset_repo,
             audit_repos,
             pick_folder,
-            reveal_path
+            reveal_path,
+            set_lang
         ])
         .setup(|app| {
             // 窗口在代码里建（见 create_main_window），所以 tauri.conf.json 里 windows 是空数组
@@ -292,5 +335,5 @@ pub fn run() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("Git Tracer 启动失败");
+        .expect("Git Tracer failed to start");
 }

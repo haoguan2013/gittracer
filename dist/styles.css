@@ -552,7 +552,9 @@ body {
 }
 .pick-all:hover { color: var(--text-2); }
 .pick-all input { display: none; }
-.pick-all span {
+/* 第一个 span 才是自绘的复选框，第二个 span 是「全选」文字：
+   选择器必须限定成 input + span，否则英文的 SELECT ALL 会被压成 12px 宽而溢出到输入框上 */
+.pick-all input + span {
   position: relative;
   width: 12px; height: 12px;
   border: 1px solid rgba(159, 228, 242, 0.3);
@@ -1379,6 +1381,8 @@ body {
   gap: 10px;
 }
 .audit-field > span { color: var(--text-2); font-size: 12px; letter-spacing: .02em; }
+/* 英文标签更长（Allowed branches / Check mode），标签列放宽，免得折成两行 */
+html[lang="en"] .audit-field { grid-template-columns: 104px minmax(0, 1fr); }
 .audit-field input,
 .audit-field select {
   height: 28px;
