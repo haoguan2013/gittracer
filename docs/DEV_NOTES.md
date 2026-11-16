@@ -278,6 +278,24 @@ docs/
 
 ## 更新记录
 
+**0.9.1**
+
+- **`resolve_base` 回退到远程跟踪引用**：候选写法从「只是一个分支名」变成 `c` / `origin/c` /
+  `refs/remotes/origin/c` 三种，按序试 `rev-parse --verify`，返回真正解析到的那个
+  （后面 `branch --no-merged` 要直接用它，报告里也该写明查的是 `origin/main`）。
+  起因是 v0.9.0 发的 tag 在 CI 上跑出来一条 `基准分支 main 在这个仓库里不存在，本条未生效`：
+  tag 检出是 detached HEAD，仓库里只有 `origin/main`，只认本地分支就等于这条检查没跑——
+  门禁全绿，但「有分支没合并进 main」什么也没查。缺省探测（main → master → develop）
+  同样受益。文案同步改成「在本地和 origin 下都不存在」。
+- **`audit.yml` 补一步 fetch**：`git fetch --no-tags --prune origin "+refs/heads/*:refs/remotes/origin/*"`。
+  tag / 合并检出的默认 refspec 只带那一个 ref，不补这一步 `origin/main` 压根不存在，
+  上面的回退也就无处可回。对象在 `fetch-depth: 0` 时已经落地，这步只补 refs，几乎不花时间。
+- **`tools/` 进版本库**：`.gitignore` 去掉整目录的 `tools/`（产物 `GitTracer-*-portable.zip` 仍忽略）。
+  7 个脚本 64KB：打包、install.ps1、演示仓库、图标、CDP 截图、动图录制。
+- **测试**：core 43 项（新增两项用真仓库验证基准解析：本地分支优先、仅 `origin/main` 时回退，
+  且回退后 `unmerged_finding` 不再报未生效）。这类用例要跑 git，写法上「git 不可用就 return 跳过」，
+  别把环境缺失算成测试失败。
+
 **0.9.0**
 
 - **核心拆 crate**：`src-tauri/core/`（`git-tracer-core`）装走 audit / config / git / scan 四个纯逻辑模块

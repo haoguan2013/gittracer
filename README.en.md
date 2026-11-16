@@ -1,6 +1,6 @@
 # Git Tracer
 
-![Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6) ![Tauri 2 + Rust](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20Rust-DEA584) ![No build step](https://img.shields.io/badge/Frontend-HTML%20%2F%20CSS%20%2F%20JS-3178C6) ![v0.8.0](https://img.shields.io/badge/Version-0.9.0-2F81F7) ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue)
+![Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6) ![Tauri 2 + Rust](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20Rust-DEA584) ![No build step](https://img.shields.io/badge/Frontend-HTML%20%2F%20CSS%20%2F%20JS-3178C6) ![v0.9.1](https://img.shields.io/badge/Version-0.9.1-2F81F7) ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue)
 
 [中文](README.md) · **English**
 
@@ -190,13 +190,13 @@ The repo ships a ready-made workflow, [`.github/workflows/audit.yml`](.github/wo
 ```yaml
 jobs:
   audit:
-    uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.9.0
+    uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.9.1
     with:
       roots: '.'
       branch: 'main,release/*'
 ```
 
-It builds `gittracer-audit` itself, so it doesn't depend on a published package; the report goes to the job summary and an artifact, and a non-zero exit fails the job. Leave inputs empty and it reads `.gittracer.toml` from the repo: `depth`, allowed branches, base, skips, strict — the workflow only runs it. (`@v0.9.0` assumes the tag exists; use `@main` before that.) If you'd rather not compile Rust in CI, the Releases page has prebuilt CLIs for all three platforms (`gittracer-audit-linux-x64.tar.gz`, `gittracer-audit-macos-arm64.tar.gz`, `gittracer-audit-windows-x64.zip`) — swap the build step for a download.
+It builds `gittracer-audit` itself, so it doesn't depend on a published package; the report goes to the job summary and an artifact, and a non-zero exit fails the job. Leave inputs empty and it reads `.gittracer.toml` from the repo: `depth`, allowed branches, base, skips, strict — the workflow only runs it. (`@v0.9.1` assumes the tag exists; use `@main` before that.) If you'd rather not compile Rust in CI, the Releases page has prebuilt CLIs for all three platforms (`gittracer-audit-linux-x64.tar.gz`, `gittracer-audit-macos-arm64.tar.gz`, `gittracer-audit-windows-x64.zip`) — swap the build step for a download.
 
 When this repository runs the workflow on itself, it also uploads a SARIF copy to the Code scanning tab — audit results right on the repo page, no digging through logs. Reusable runs elsewhere skip that step (it needs `security-events` permission, which belongs to the caller).
 
@@ -242,7 +242,7 @@ Hard rules underneath: empty commit messages are rejected; **commits and diff pr
 
 ## Download and install
 
-Grab `GitTracer-0.9.0-portable.zip` from **Releases** (no binaries are committed to the repo; you can also build it yourself):
+Grab `GitTracer-0.9.1-portable.zip` from **Releases** (no binaries are committed to the repo; you can also build it yourself):
 
 | Option | How | Notes |
 | --- | --- | --- |
@@ -268,7 +268,7 @@ To produce the portable zip:
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\make-package.ps1
 ```
 
-Artifacts: `src-tauri/target/release/git-tracer.exe`, `gittracer-audit.exe` beside it, and `GitTracer-0.9.0-portable.zip`. `tools/` also holds `make-demo-data.ps1` (fake repositories for testing and screenshots), `make-icons.py` (stdlib only), `cdp.mjs` (drives the UI over CDP for screenshots), and the two-step GIF recorder: `make-gif.mjs` captures frames, `gif.py` assembles them (`pip install pillow` for that step).
+Artifacts: `src-tauri/target/release/git-tracer.exe`, `gittracer-audit.exe` beside it, and `GitTracer-0.9.1-portable.zip`. `tools/` also holds `make-demo-data.ps1` (fake repositories for testing and screenshots), `make-icons.py` (stdlib only), `cdp.mjs` (drives the UI over CDP for screenshots), and the two-step GIF recorder: `make-gif.mjs` captures frames, `gif.py` assembles them (`pip install pillow` for that step).
 
 ### Layout
 

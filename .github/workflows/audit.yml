@@ -4,7 +4,7 @@
 #   1. 打 v* 标签时自动跑（发版前守一道）；
 #   2. Actions 页面手动跑，目录 / 分支规则 / 忽略项都能填；
 #   3. 别的仓库直接复用：
-#        uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.9.0
+#        uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.9.1
 #
 # 参数留空就用仓库里的 .gittracer.toml：规则跟着代码走，CI 和本地读的是同一份。
 # 本仓库自己跑时还会把 SARIF 报告传到 Code scanning 标签页（别的仓库跳过这一步，
@@ -88,6 +88,12 @@ jobs:
           # 必须全量：ahead / behind / branch --no-merged 都依赖远程跟踪分支，
           # 浅克隆下这些数字全是 0，检查会静默变成「全部通过」。
           fetch-depth: 0
+
+      - name: 取回分支引用
+        # tag / 合并检出都是 detached HEAD，默认 refspec 只带那一个 ref，
+        # 仓库里于是没有 origin/main —— 基准分支检查（--base）会同这条一起失效。
+        # 显式把 branches/* 拉成远程跟踪引用：对象已经在本地，这一步只是补 refs。
+        run: git fetch --no-tags --prune origin "+refs/heads/*:refs/remotes/origin/*"
 
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable

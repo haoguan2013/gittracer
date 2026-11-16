@@ -1,6 +1,6 @@
 # Git Tracer
 
-![Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6) ![Tauri 2 + Rust](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20Rust-DEA584) ![零构建前端](https://img.shields.io/badge/Frontend-HTML%20%2F%20CSS%20%2F%20JS-3178C6) ![v0.8.0](https://img.shields.io/badge/Version-0.9.0-2F81F7) ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue)
+![Windows 10/11](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6) ![Tauri 2 + Rust](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20Rust-DEA584) ![零构建前端](https://img.shields.io/badge/Frontend-HTML%20%2F%20CSS%20%2F%20JS-3178C6) ![v0.9.1](https://img.shields.io/badge/Version-0.9.1-2F81F7) ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue)
 
 **中文** · [English](README.en.md)
 
@@ -203,13 +203,13 @@ strict = true                  # 从工作区直接打包发版时打开：未�
 ```yaml
 jobs:
   audit:
-    uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.9.0
+    uses: haoguan2013/gittracer/.github/workflows/audit.yml@v0.9.1
     with:
       roots: '.'
       branch: 'main,release/*'
 ```
 
-它自己编译 `gittracer-audit`，不依赖已经发布的安装包；报告写进 job summary 并作为 artifact 留档，返回码非 0 就让 job 失败。输入项留空就吃仓库里的 `.gittracer.toml`：`depth`、允许分支、基准、跳过项都能写在文件里，工作流只负责跑。（`@v0.9.0` 是发版后的 tag，还没打就先写 `@main`。）不想在 CI 里编 Rust 的话，Releases 里有三个平台的现成 CLI（`gittracer-audit-linux-x64.tar.gz` / `gittracer-audit-macos-arm64.tar.gz` / `gittracer-audit-windows-x64.zip`），取一份替掉「构建巡检程序」那步即可。
+它自己编译 `gittracer-audit`，不依赖已经发布的安装包；报告写进 job summary 并作为 artifact 留档，返回码非 0 就让 job 失败。输入项留空就吃仓库里的 `.gittracer.toml`：`depth`、允许分支、基准、跳过项都能写在文件里，工作流只负责跑。（`@v0.9.1` 是发版后的 tag，还没打就先写 `@main`。）不想在 CI 里编 Rust 的话，Releases 里有三个平台的现成 CLI（`gittracer-audit-linux-x64.tar.gz` / `gittracer-audit-macos-arm64.tar.gz` / `gittracer-audit-windows-x64.zip`），取一份替掉「构建巡检程序」那步即可。
 
 本仓库自己跑这个工作流时，还会顺手把 SARIF 版报告传到 Code scanning 标签页——巡检结果在仓库页就能看，不用点进日志找。别的仓库复用时不带这步（那边要 `security-events` 权限，由调用方自己决定）。
 
@@ -255,7 +255,7 @@ jobs:
 
 ## 下载与安装
 
-到本仓库的 **Releases** 页面下载 `GitTracer-0.9.0-portable.zip`（仓库里不放二进制包，也可以按下面的命令自己生成）：
+到本仓库的 **Releases** 页面下载 `GitTracer-0.9.1-portable.zip`（仓库里不放二进制包，也可以按下面的命令自己生成）：
 
 | 方式 | 做法 | 说明 |
 | --- | --- | --- |
@@ -281,7 +281,7 @@ pnpm tauri build    # release exe + NSIS 安装包
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\make-package.ps1
 ```
 
-产物在 `src-tauri/target/release/git-tracer.exe`、同目录下的 `gittracer-audit.exe`，以及 `GitTracer-0.9.0-portable.zip`。`tools/` 里还有生成测试仓库的 `make-demo-data.ps1`、生成图标的 `make-icons.py`（纯标准库）、用 CDP 驱动界面截图的 `cdp.mjs`，以及录 README 动图的两步：`make-gif.mjs` 抓帧、`gif.py` 合成（这一步要 `pip install pillow`）。
+产物在 `src-tauri/target/release/git-tracer.exe`、同目录下的 `gittracer-audit.exe`，以及 `GitTracer-0.9.1-portable.zip`。`tools/` 里还有生成测试仓库的 `make-demo-data.ps1`、生成图标的 `make-icons.py`（纯标准库）、用 CDP 驱动界面截图的 `cdp.mjs`，以及录 README 动图的两步：`make-gif.mjs` 抓帧、`gif.py` 合成（这一步要 `pip install pillow`）。
 
 ### 项目怎么搭的
 

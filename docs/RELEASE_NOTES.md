@@ -7,6 +7,34 @@
 
 ---
 
+## v0.9.1 — 门禁在 CI 上不留虚设检查
+
+**发布**：2026-11-16 ・ **平台**：Windows 10/11（GUI）・ Windows / Linux / macOS（CLI） ・ **下载**：`GitTracer-0.9.1-portable.zip` + 三平台 CLI 压缩包
+
+一句话：修掉 v0.9.0 门禁在 CI 上唯一那条「看着有、实际没查」的检查。
+
+### 一、基准分支会退到 `origin/main`
+
+CI 上的工作区几乎都是 detached HEAD（打 tag 检出、PR 合并检出），仓库里只有 `origin/main`，没有本地 `main`。v0.9.0 的基准分支只认本地分支，于是 `.gittracer.toml` 里写 `base = "main"` 的团队会得到一条提示：
+
+```
+WARN  unmerged  基准分支 main 在这个仓库里不存在，本条未生效
+```
+
+门禁照样是绿的，但「有分支没合并进 main」这条其实什么都没查。现在解析顺序是本地分支 → `origin/<分支>` → `refs/remotes/origin/<分支>`，报告里会写清实际拿哪个当基准（例如「有 1 个本地分支没合并进 origin/main」）。
+
+### 二、工作流补回分支引用
+
+`audit.yml` 在检出后多一步 `git fetch --no-tags --prune origin "+refs/heads/*:refs/remotes/origin/*"`：tag 检出的默认 refspec 只带那一个 ref，不补这一步，`origin/main` 根本不存在，上一节的回退也就无从回退。
+
+### 三、`tools/` 进版本库
+
+打包链（`make-package.ps1` + `install.ps1`）之前被 `.gitignore` 整目录排除，只有本机能打出便携包。现在 `tools/` 跟着版本库走，7 个脚本（约 64KB）连同产物忽略规则一起公开，别人拉下仓库就能复现 Release 里那个 zip。
+
+> 升级提示：命令行参数、`.gittracer.toml`、报告 JSON 结构均无变化。只有一处文案改动——基准分支在本地和 origin 下都找不到时，提示改成「在本地和 origin 下都不存在」。
+
+---
+
 ## v0.9.0 — 门禁进场：三平台 CLI、SARIF、基线
 
 **发布**：2026-11-16 ・ **平台**：Windows 10/11（GUI）・ Windows / Linux / macOS（CLI） ・ **下载**：`GitTracer-0.9.0-portable.zip` + 三平台 CLI 压缩包

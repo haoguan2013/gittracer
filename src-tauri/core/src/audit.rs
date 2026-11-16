@@ -903,6 +903,20 @@ fn operation_in_progress(git_dir: &Path) -> Option<&'static str> {
     None
 }
 
+/// 一个分支名的几种可用写法：本地分支优先，其次才是远程跟踪引用。
+///
+/// CI 里查出来的工作区经常是 detached HEAD（tag 检出、PR 合并检出），仓库里
+/// 只有 `origin/main` 而没有本地 `main`。只认本地分支的话，`base = "main"`
+/// 会退化成「基准分支不存在，本条未生效」——门禁上一条虚设的检查，
+/// 看着有、实际什么都没查。
+fn base_refs(c: &str) -> Vec<String> {
+    vec![
+        c.to_string(),
+        format!("origin/{c}"),
+        format!("refs/remotes/origin/{c}"),
+    ]
+}
+
 /// 基准分支：显式给了就用它，否则按 main → master → develop 的顺序找第一个存在的。
 fn resolve_base(repo: &Path, prefer: Option<&str>) -> Option<String> {
     let candidates: Vec<String> = match prefer {
@@ -913,12 +927,16 @@ fn resolve_base(repo: &Path, prefer: Option<&str>) -> Option<String> {
         if c.is_empty() {
             continue;
         }
-        let spec = format!("{c}^{{commit}}");
-        let ok = git::git_lines(repo, &["rev-parse", "--verify", "--quiet", &spec])
-            .map(|l| !l.is_empty())
-            .unwrap_or(false);
-        if ok {
-            return Some(c);
+        for r in base_refs(&c) {
+            let spec = format!("{r}^{{commit}}");
+            let ok = git::git_lines(repo, &["rev-parse", "--verify", "--quiet", &spec])
+                .map(|l| !l.is_empty())
+                .unwrap_or(false);
+            if ok {
+                // 返回真正解析到的那个写法：后面 branch --no-merged 要能用它，
+                // 报告里也该写明查的是 origin/main 而不是 main。
+                return Some(r);
+            }
         }
     }
     None
@@ -927,7 +945,7 @@ fn resolve_base(repo: &Path, prefer: Option<&str>) -> Option<String> {
 fn unmerged_finding(repo: &Path, prefer: Option<&str>, current: Option<&str>) -> Option<Finding> {
     let base = match resolve_base(repo, prefer) {
         Some(b) => b,
-        // 显式指定了基准分支，但这个仓库里没有它：不能装作查过了。
+        // 显式指定了基准分支，但本地和 origin 下都没有它：不能装作查过了。
         // 自动探测失败时（仓库只有一个分支、也没有 main/master/develop）不算问题。
         None => {
             return prefer.map(|b| {
@@ -935,7 +953,7 @@ fn unmerged_finding(repo: &Path, prefer: Option<&str>, current: Option<&str>) ->
                     "unmerged",
                     Severity::Warn,
                     Scope::Workspace,
-                    format!("基准分支 {b} 在这个仓库里不存在，本条未生效"),
+                    format!("基准分支 {b} 在本地和 origin 下都不存在，本条未生效"),
                 )
             })
         }
@@ -1947,5 +1965,74 @@ mod tests {
         let r = &v["runs"][0]["results"][0];
         assert!(r.get("suppressions").is_some(), "已知项要带 suppressions");
         assert_eq!(r["suppressions"][0]["kind"], "external");
+    }
+
+    // ---------------------------------------------------------------- 基准分支
+
+    /// 造一个真仓库。CI 的早退保护：没装 git 就跳过，不要把环境问题算成测试失败。
+    fn repo_with(name: &str, script: &[&[&str]]) -> Option<PathBuf> {
+        let dir = std::env::temp_dir().join(format!("gt-base-{}-{}", std::process::id(), name));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).ok()?;
+        for args in script {
+            let out = std::process::Command::new("git")
+                .args(*args)
+                .current_dir(&dir)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@example.com")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@example.com")
+                .output()
+                .ok()?;
+            if !out.status.success() {
+                return None; // 没装 git 或者这版 git 不认参数 —— 跳过
+            }
+        }
+        Some(dir)
+    }
+
+    #[test]
+    fn base_prefers_local_branch() {
+        let dir = match repo_with(
+            "local",
+            &[
+                &["init", "-q"],
+                &["commit", "-q", "--allow-empty", "-m", "init"],
+            ],
+        ) {
+            Some(d) => d,
+            None => return,
+        };
+        assert!(git::git_lines(&dir, &["branch", "-M", "main"]).is_ok());
+        assert_eq!(resolve_base(&dir, Some("main")).as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn base_falls_back_to_remote_tracking_ref() {
+        // CI 里的样子：detached HEAD、没有本地 main，只有 origin/main
+        let dir = match repo_with(
+            "origin",
+            &[
+                &["init", "-q"],
+                &["commit", "-q", "--allow-empty", "-m", "init"],
+                &["branch", "-M", "main"],
+                &["update-ref", "refs/remotes/origin/main", "HEAD"],
+                &["checkout", "-q", "--detach"],
+                &["branch", "-D", "main"],
+            ],
+        ) {
+            Some(d) => d,
+            None => return,
+        };
+        assert_eq!(
+            resolve_base(&dir, Some("main")).as_deref(),
+            Some("origin/main"),
+            "本地没有 main 时应该退到 origin/main"
+        );
+        // 退过去之后这条检查要真的跑起来，而不是留一条「本条未生效」
+        assert!(
+            unmerged_finding(&dir, Some("main"), Some("detached")).is_none(),
+            "基准分支能从 origin 解析出来时，不该再报未生效"
+        );
     }
 }

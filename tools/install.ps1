@@ -15,7 +15,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $App        = 'Git Tracer'
-$Version    = '0.9.0'
+$Version    = '0.9.1'
 $ExeName    = 'GitTracer.exe'
 $AuditName  = 'gittracer-audit.exe'
 $InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\GitTracer'
