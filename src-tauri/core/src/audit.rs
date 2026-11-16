@@ -2362,9 +2362,12 @@ mod tests {
         assert!(!own.is_empty() && own != ".", "得到 {own}");
         assert_eq!(own, gitlab_path(&cwd.to_string_lossy()));
 
-        // 反斜杠写法的同一个目录也得认
-        let win_style = inside.to_string_lossy().replace('/', "\\");
-        assert_eq!(gitlab_path(&win_style), "nested/repo");
+        // 反斜杠写法的同一个目录也得认。只在 Windows 上有意义：Linux 上
+        // `\` 是合法文件名字符，`a\b` 就是一个目录名而不是两级路径。
+        if cfg!(windows) {
+            let win_style = inside.to_string_lossy().replace('/', "\\");
+            assert_eq!(gitlab_path(&win_style), "nested/repo");
+        }
 
         // 不在工作目录下就原样返回（分隔符统一成 /），至少看得出是哪个目录
         let outside = cwd.parent().expect("工作目录总得有父目录").join("outside-repo");
